@@ -77,3 +77,11 @@ Thumbs.db
 *.tmp
 *.bak
 *.old
+
+*.xlsx
+*.csv
+
+*.xml
+
+!utils/
+!utils/**/*.xml
