@@ -1,0 +1,588 @@
+2026-02-04 10:33:27,194 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 10:33:27,194 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 10:33:27,204 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 10:33:27,214 - main - INFO - 75 - Fetching all ledgers for company: KAY BEE BIO-ORGANICS PVT LTD (MH-PHALTAN) (From Apr-23)
+2026-02-04 10:33:32,022 - main - ERROR - 122 - Error fetching ledgers: not well-formed (invalid token): line 35464, column 36
+Traceback (most recent call last):
+  File "E:\tally_project\tally\tally_connector.py", line 91, in get_ledger
+    root = ET.fromstring(response.content)
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\xml\etree\ElementTree.py", line 1348, in XML
+    parser.feed(text)
+    ~~~~~~~~~~~^^^^^^
+xml.etree.ElementTree.ParseError: not well-formed (invalid token): line 35464, column 36
+2026-02-04 10:34:37,711 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 10:34:37,711 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 10:34:37,720 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 10:34:37,730 - main - INFO - 75 - Fetching all ledgers for company: KAY BEE BIO-ORGANICS PVT LTD (MH-PHALTAN) (From Apr-23)
+2026-02-04 10:34:41,164 - main - INFO - 123 - Successfully fetched 0 ledgers
+2026-02-04 10:36:25,640 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 10:36:25,640 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 10:36:25,650 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 10:36:25,660 - main - INFO - 75 - Fetching all ledgers for company: KAY BEE BIO-ORGANICS PVT LTD (MH-PHALTAN) (From Apr-23)
+2026-02-04 10:37:25,675 - main - ERROR - 132 - Error fetching ledgers: HTTPConnectionPool(host='localhost', port=9000): Read timed out. (read timeout=60)
+Traceback (most recent call last):
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 534, in _make_request
+    response = conn.getresponse()
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connection.py", line 571, in getresponse
+    httplib_response = super().getresponse()
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 1430, in getresponse
+    response.begin()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 331, in begin
+    version, status, reason = self._read_status()
+                              ~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 292, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\socket.py", line 719, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+TimeoutError: timed out
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\tally_project\.venv\Lib\site-packages\requests\adapters.py", line 644, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\util\retry.py", line 490, in increment
+    raise reraise(type(error), error, _stacktrace)
+          ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\util\util.py", line 39, in reraise
+    raise value
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 536, in _make_request
+    self._raise_timeout(err=e, url=url, timeout_value=read_timeout)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 367, in _raise_timeout
+    raise ReadTimeoutError(
+        self, url, f"Read timed out. (read timeout={timeout_value})"
+    ) from err
+urllib3.exceptions.ReadTimeoutError: HTTPConnectionPool(host='localhost', port=9000): Read timed out. (read timeout=60)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\tally_project\tally\tally_connector.py", line 80, in get_ledger
+    response = requests.post(
+        url=self.url,
+    ...<2 lines>...
+        timeout=60
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\requests\api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\requests\sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\adapters.py", line 690, in send
+    raise ReadTimeout(e, request=request)
+requests.exceptions.ReadTimeout: HTTPConnectionPool(host='localhost', port=9000): Read timed out. (read timeout=60)
+2026-02-04 10:42:35,668 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 10:42:35,669 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 10:43:07,945 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 10:43:07,945 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 10:43:07,956 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 10:43:07,966 - main - INFO - 78 - Fetching all ledgers for company: KAY BEE BIO-ORGANICS PVT LTD (MH-PHALTAN) (From Apr-23)
+2026-02-04 10:43:07,966 - main - INFO - 87 - Fetching batch 1, starting from: beginning
+2026-02-04 10:44:07,981 - main - ERROR - 162 - Error fetching ledgers: HTTPConnectionPool(host='localhost', port=9000): Read timed out. (read timeout=60)
+Traceback (most recent call last):
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 534, in _make_request
+    response = conn.getresponse()
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connection.py", line 571, in getresponse
+    httplib_response = super().getresponse()
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 1430, in getresponse
+    response.begin()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 331, in begin
+    version, status, reason = self._read_status()
+                              ~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 292, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\socket.py", line 719, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+TimeoutError: timed out
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\tally_project\.venv\Lib\site-packages\requests\adapters.py", line 644, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\util\retry.py", line 490, in increment
+    raise reraise(type(error), error, _stacktrace)
+          ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\util\util.py", line 39, in reraise
+    raise value
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 536, in _make_request
+    self._raise_timeout(err=e, url=url, timeout_value=read_timeout)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 367, in _raise_timeout
+    raise ReadTimeoutError(
+        self, url, f"Read timed out. (read timeout={timeout_value})"
+    ) from err
+urllib3.exceptions.ReadTimeoutError: HTTPConnectionPool(host='localhost', port=9000): Read timed out. (read timeout=60)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\tally_project\tally\tally_connector.py", line 100, in get_ledger
+    response = requests.post(
+        url=self.url,
+    ...<2 lines>...
+        timeout=60
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\requests\api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\requests\sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\adapters.py", line 690, in send
+    raise ReadTimeout(e, request=request)
+requests.exceptions.ReadTimeout: HTTPConnectionPool(host='localhost', port=9000): Read timed out. (read timeout=60)
+2026-02-04 10:46:28,189 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 10:46:28,190 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 10:46:28,199 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 10:46:28,211 - main - INFO - 78 - Fetching all ledgers for company: TDL Company
+2026-02-04 10:46:28,211 - main - INFO - 87 - Fetching batch 1, starting from: beginning
+2026-02-04 10:46:28,430 - main - INFO - 141 - No more ledgers found. Stopping.
+2026-02-04 10:46:28,432 - main - INFO - 157 - Successfully fetched 0 ledgers in 1 batches
+2026-02-04 10:59:10,447 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 10:59:10,448 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 10:59:10,456 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 10:59:10,465 - main - INFO - 78 - Fetching all ledger masters for company: TDL Company
+2026-02-04 10:59:10,496 - main - INFO - 165 - Successfully fetched 0 ledgers
+2026-02-04 10:59:43,149 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 10:59:43,149 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 10:59:43,157 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 10:59:43,166 - main - INFO - 78 - Fetching all ledger masters for company: TDL Company
+2026-02-04 10:59:43,209 - main - INFO - 165 - Successfully fetched 0 ledgers
+2026-02-04 11:00:48,642 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 11:00:48,642 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 11:00:48,650 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 11:00:48,656 - main - INFO - 78 - Fetching all ledger masters for company: TDL Company
+2026-02-04 11:00:48,691 - main - INFO - 155 - Successfully fetched 0 ledgers
+2026-02-04 11:01:49,566 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 11:01:49,567 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 11:01:49,574 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 11:01:49,582 - main - INFO - 78 - Fetching all ledger masters for company: TDL Company
+2026-02-04 11:01:49,768 - main - INFO - 155 - Successfully fetched 0 ledgers
+2026-02-04 11:03:32,304 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 11:03:32,304 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 11:03:32,311 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 11:03:32,319 - main - INFO - 78 - Fetching all ledger masters for company: TDL Company
+2026-02-04 11:03:32,491 - main - INFO - 190 - Successfully fetched 9 ledgers
+2026-02-04 11:04:01,388 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 11:04:01,389 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 11:04:01,396 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 11:04:01,403 - main - INFO - 78 - Fetching all ledger masters for company: TDL Company
+2026-02-04 11:04:01,582 - main - INFO - 190 - Successfully fetched 9 ledgers
+2026-02-04 11:04:51,168 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 11:04:51,169 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 11:04:51,193 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 11:04:51,203 - main - INFO - 78 - Fetching all ledger masters for company: KAY BEE BIO-ORGANICS PVT LTD (MH-PHALTAN) (From Apr-23)
+2026-02-04 11:06:51,230 - main - ERROR - 195 - Error fetching ledgers: HTTPConnectionPool(host='localhost', port=9000): Read timed out. (read timeout=120)
+Traceback (most recent call last):
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 534, in _make_request
+    response = conn.getresponse()
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connection.py", line 571, in getresponse
+    httplib_response = super().getresponse()
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 1430, in getresponse
+    response.begin()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 331, in begin
+    version, status, reason = self._read_status()
+                              ~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 292, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\socket.py", line 719, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+TimeoutError: timed out
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\tally_project\.venv\Lib\site-packages\requests\adapters.py", line 644, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\util\retry.py", line 490, in increment
+    raise reraise(type(error), error, _stacktrace)
+          ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\util\util.py", line 39, in reraise
+    raise value
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 536, in _make_request
+    self._raise_timeout(err=e, url=url, timeout_value=read_timeout)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 367, in _raise_timeout
+    raise ReadTimeoutError(
+        self, url, f"Read timed out. (read timeout={timeout_value})"
+    ) from err
+urllib3.exceptions.ReadTimeoutError: HTTPConnectionPool(host='localhost', port=9000): Read timed out. (read timeout=120)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\tally_project\tally\tally_connector.py", line 83, in get_ledger
+    response = requests.post(
+        url=self.url,
+    ...<2 lines>...
+        timeout=120
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\requests\api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\requests\sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\adapters.py", line 690, in send
+    raise ReadTimeout(e, request=request)
+requests.exceptions.ReadTimeout: HTTPConnectionPool(host='localhost', port=9000): Read timed out. (read timeout=120)
+2026-02-04 11:09:20,055 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 11:09:20,055 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 11:09:20,063 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 11:09:29,512 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 11:09:29,512 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 11:09:29,519 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 11:09:29,526 - main - INFO - 75 - Fetching all ledger masters for company: KAY BEE BIO-ORGANICS PVT LTD (MH-PHALTAN) (From Apr-23)
+2026-02-04 11:09:29,526 - main - INFO - 81 - Fetching page 1...
+2026-02-04 11:10:29,545 - main - ERROR - 214 - Error fetching ledgers: HTTPConnectionPool(host='localhost', port=9000): Read timed out. (read timeout=60)
+Traceback (most recent call last):
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 534, in _make_request
+    response = conn.getresponse()
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connection.py", line 571, in getresponse
+    httplib_response = super().getresponse()
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 1430, in getresponse
+    response.begin()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 331, in begin
+    version, status, reason = self._read_status()
+                              ~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 292, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\socket.py", line 719, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+TimeoutError: timed out
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\tally_project\.venv\Lib\site-packages\requests\adapters.py", line 644, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\util\retry.py", line 490, in increment
+    raise reraise(type(error), error, _stacktrace)
+          ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\util\util.py", line 39, in reraise
+    raise value
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 536, in _make_request
+    self._raise_timeout(err=e, url=url, timeout_value=read_timeout)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 367, in _raise_timeout
+    raise ReadTimeoutError(
+        self, url, f"Read timed out. (read timeout={timeout_value})"
+    ) from err
+urllib3.exceptions.ReadTimeoutError: HTTPConnectionPool(host='localhost', port=9000): Read timed out. (read timeout=60)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\tally_project\tally\tally_connector.py", line 93, in get_ledger
+    response = requests.post(
+        url=self.url,
+    ...<2 lines>...
+        timeout=60
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\requests\api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\requests\sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\adapters.py", line 690, in send
+    raise ReadTimeout(e, request=request)
+requests.exceptions.ReadTimeout: HTTPConnectionPool(host='localhost', port=9000): Read timed out. (read timeout=60)
+2026-02-04 11:12:53,946 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 11:12:53,947 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 11:12:53,954 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 11:12:53,994 - main - INFO - 78 - Fetching all ledger masters for company: Freshnova Pvt Ltd (FCY)
+2026-02-04 11:12:55,877 - main - INFO - 181 - Successfully fetched 26 ledgers
+2026-02-04 11:17:57,632 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 11:17:57,632 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 11:17:57,640 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 11:17:57,656 - main - INFO - 75 - Fetching all ledger masters for company: Freshnova Pvt Ltd (FCY)
+2026-02-04 11:17:59,410 - main - INFO - 165 - Successfully fetched 26 ledgers
+2026-02-04 11:17:59,414 - main - INFO - 223 - Exported 26 ledgers to ledgers_20260204_111759.csv
+2026-02-04 11:18:02,350 - main - INFO - 300 - Exported 26 ledgers to ledgers_20260204_111802.xlsx
+2026-02-04 11:22:03,204 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 11:22:03,204 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 11:22:03,214 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 11:22:03,224 - main - INFO - 75 - Fetching all ledger masters for company: TDL Company
+2026-02-04 11:22:03,815 - main - INFO - 165 - Successfully fetched 9 ledgers
+2026-02-04 11:22:03,818 - main - INFO - 223 - Exported 9 ledgers to ledgers_20260204_112203.csv
+2026-02-04 11:23:02,363 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 11:23:02,363 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 11:23:02,384 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 11:23:02,393 - main - INFO - 75 - Fetching all ledger masters for company: TDL Company
+2026-02-04 11:23:03,097 - main - INFO - 165 - Successfully fetched 9 ledgers
+2026-02-04 11:23:03,100 - main - INFO - 223 - Exported 9 ledgers to ledgers_20260204_112303.csv
+2026-02-04 11:23:27,759 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 11:23:27,760 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 11:23:31,850 - main - ERROR - 35 - ConnectionError while connecting to Tally at http://localhost:9000: HTTPConnectionPool(host='localhost', port=9000): Max retries exceeded with url: / (Caused by NewConnectionError("HTTPConnection(host='localhost', port=9000): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+Traceback (most recent call last):
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connection.py", line 204, in _new_conn
+    sock = connection.create_connection(
+        (self._dns_host, self.port),
+    ...<2 lines>...
+        socket_options=self.socket_options,
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\util\connection.py", line 85, in create_connection
+    raise err
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\util\connection.py", line 73, in create_connection
+    sock.connect(sa)
+    ~~~~~~~~~~~~^^^^
+ConnectionRefusedError: [WinError 10061] No connection could be made because the target machine actively refused it
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 493, in _make_request
+    conn.request(
+    ~~~~~~~~~~~~^
+        method,
+        ^^^^^^^
+    ...<6 lines>...
+        enforce_content_length=enforce_content_length,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connection.py", line 500, in request
+    self.endheaders()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 1333, in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 1093, in _send_output
+    self.send(msg)
+    ~~~~~~~~~^^^^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 1037, in send
+    self.connect()
+    ~~~~~~~~~~~~^^
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connection.py", line 331, in connect
+    self.sock = self._new_conn()
+                ~~~~~~~~~~~~~~^^
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connection.py", line 219, in _new_conn
+    raise NewConnectionError(
+        self, f"Failed to establish a new connection: {e}"
+    ) from e
+urllib3.exceptions.NewConnectionError: HTTPConnection(host='localhost', port=9000): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\tally_project\.venv\Lib\site-packages\requests\adapters.py", line 644, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\util\retry.py", line 535, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+urllib3.exceptions.MaxRetryError: HTTPConnectionPool(host='localhost', port=9000): Max retries exceeded with url: / (Caused by NewConnectionError("HTTPConnection(host='localhost', port=9000): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\tally_project\tally\tally_connector.py", line 21, in connect
+    response = requests.post(url=self.url, headers=self.header, timeout=60)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\requests\sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\adapters.py", line 677, in send
+    raise ConnectionError(e, request=request)
+requests.exceptions.ConnectionError: HTTPConnectionPool(host='localhost', port=9000): Max retries exceeded with url: / (Caused by NewConnectionError("HTTPConnection(host='localhost', port=9000): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+2026-02-04 11:24:01,796 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 11:24:01,796 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 11:24:01,804 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 11:24:01,814 - main - INFO - 75 - Fetching all ledger masters for company: KAY BEE BIO-ORGANICS PVT LTD (MH-PHALTAN) (From Apr-23)
+2026-02-04 11:25:35,481 - main - ERROR - 170 - Error fetching ledgers: ('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))
+Traceback (most recent call last):
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 534, in _make_request
+    response = conn.getresponse()
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connection.py", line 571, in getresponse
+    httplib_response = super().getresponse()
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 1430, in getresponse
+    response.begin()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 331, in begin
+    version, status, reason = self._read_status()
+                              ~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 292, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\socket.py", line 719, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+ConnectionResetError: [WinError 10054] An existing connection was forcibly closed by the remote host
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\tally_project\.venv\Lib\site-packages\requests\adapters.py", line 644, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\util\retry.py", line 490, in increment
+    raise reraise(type(error), error, _stacktrace)
+          ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\util\util.py", line 38, in reraise
+    raise value.with_traceback(tb)
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connectionpool.py", line 534, in _make_request
+    response = conn.getresponse()
+  File "E:\tally_project\.venv\Lib\site-packages\urllib3\connection.py", line 571, in getresponse
+    httplib_response = super().getresponse()
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 1430, in getresponse
+    response.begin()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 331, in begin
+    version, status, reason = self._read_status()
+                              ~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\http\client.py", line 292, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "C:\Users\kaybe\AppData\Roaming\uv\python\cpython-3.13.9-windows-x86_64-none\Lib\socket.py", line 719, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+urllib3.exceptions.ProtocolError: ('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\tally_project\tally\tally_connector.py", line 81, in get_ledger
+    response = requests.post(
+        url=self.url,
+    ...<2 lines>...
+        timeout=300
+    )
+  File "E:\tally_project\.venv\Lib\site-packages\requests\api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\tally_project\.venv\Lib\site-packages\requests\sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+  File "E:\tally_project\.venv\Lib\site-packages\requests\adapters.py", line 659, in send
+    raise ConnectionError(err, request=request)
+requests.exceptions.ConnectionError: ('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))
+2026-02-04 11:27:57,353 - main - INFO - 15 - Initializing TallyConnector for http://localhost:9000
+2026-02-04 11:27:57,353 - main - INFO - 20 - Attempting to connect to Tally at http://localhost:9000...
+2026-02-04 11:28:20,294 - main - INFO - 25 - Successfully connected to Tally at http://localhost:9000
+2026-02-04 11:28:20,315 - main - INFO - 75 - Fetching all ledger masters for company: KAY BEE EXPORTS INTERNATIONAL PVT LTD (FCY)
+2026-02-04 11:28:22,833 - main - INFO - 165 - Successfully fetched 190 ledgers
+2026-02-04 11:28:22,841 - main - INFO - 223 - Exported 190 ledgers to ledgers_20260204_112822.csv
