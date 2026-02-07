@@ -84,4 +84,4 @@ Thumbs.db
 *.xml
 
 !utils/
-!utils/**/*.xml
+!utils/**/*.xmlxml file/ledger_learn.xml
