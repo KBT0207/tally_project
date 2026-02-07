@@ -8,9 +8,8 @@
                 <REPORTNAME>List of Accounts</REPORTNAME>
                 <STATICVARIABLES>
                     <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+                    <SVMASTERTYPE>Group</SVMASTERTYPE>
                     <SVCURRENTCOMPANY>COMPANY_NAME_PLACEHOLDER</SVCURRENTCOMPANY>
-                    <SVFROMDATE>20250101</SVFROMDATE>
-                    <SVTODATE>20251231</SVTODATE>
                 </STATICVARIABLES>
             </REQUESTDESC>
         </EXPORTDATA>
