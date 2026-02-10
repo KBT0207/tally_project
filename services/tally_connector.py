@@ -352,7 +352,7 @@ class TallyConnector:
     def fetch_all_sales_return(self, company_name: str, from_date: Optional[str] = None,
                                to_date: Optional[str] = None, debug: bool = False) -> Optional[bytes]:
         return self._fetch_data(
-            'utils/sales_return.xml',
+            'utils/credit_note.xml',
             'Sales Return',
             company_name,
             from_date,
@@ -363,7 +363,7 @@ class TallyConnector:
     def fetch_all_purchase_return(self, company_name: str, from_date: Optional[str] = None,
                                   to_date: Optional[str] = None, debug: bool = False) -> Optional[bytes]:
         return self._fetch_data(
-            'utils/purchase_return.xml',
+            'utils/debit_note.xml',
             'Purchase Return',
             company_name,
             from_date,

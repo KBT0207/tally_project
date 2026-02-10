@@ -28,46 +28,47 @@ Path(OUTPUT_DIR).mkdir(exist_ok=True)
 
 # Voucher type configuration
 VOUCHER_TYPES = {
-    'sales': {
-        'fetch_method': 'fetch_all_sales_vouchers',
-        'process_method': normalize_voucher,
-        'filename': 'sales_vouchers.xlsx'
-    },
+    # 'sales': {
+    #     'fetch_method': 'fetch_all_sales_vouchers',
+    #     'process_method': normalize_voucher,
+    #     'filename': 'sales_vouchers.xlsx'
+    # },
     'sales_return': {
         'fetch_method': 'fetch_all_sales_return',
         'process_method': sales_return_voucher,
         'filename': 'sales_return_vouchers.xlsx'
     },
-    'purchase': {
-        'fetch_method': 'fetch_all_purchase_voucher',
-        'process_method': purchase_voucher,
-        'filename': 'purchase_vouchers.xlsx'
-    },
+
+    # 'purchase': {
+    #     'fetch_method': 'fetch_all_purchase_voucher',
+    #     'process_method': purchase_voucher,
+    #     'filename': 'purchase_vouchers.xlsx'
+    # },
     'purchase_return': {
         'fetch_method': 'fetch_all_purchase_return',
         'process_method': purchase_return_voucher,
         'filename': 'purchase_return_vouchers.xlsx'
     },
-    'receipt': {
-        'fetch_method': 'fetch_all_receipt_vouchers',
-        'process_method': receipt_voucher,
-        'filename': 'receipt_vouchers.xlsx'
-    },
-    'payment': {
-        'fetch_method': 'fetch_all_payment_vouchers',
-        'process_method': payment_voucher,
-        'filename': 'payment_vouchers.xlsx'
-    },
-    'journal': {
-        'fetch_method': 'fetch_all_journal_vouchers',
-        'process_method': journal_voucher,
-        'filename': 'journal_vouchers.xlsx'
-    },
-    'contra': {
-        'fetch_method': 'fetch_all_contra_vouchers',
-        'process_method': contra_voucher,
-        'filename': 'contra_vouchers.xlsx'
-    }
+    # 'receipt': {
+    #     'fetch_method': 'fetch_all_receipt_vouchers',
+    #     'process_method': receipt_voucher,
+    #     'filename': 'receipt_vouchers.xlsx'
+    # },
+    # 'payment': {
+    #     'fetch_method': 'fetch_all_payment_vouchers',
+    #     'process_method': payment_voucher,
+    #     'filename': 'payment_vouchers.xlsx'
+    # },
+    # 'journal': {
+    #     'fetch_method': 'fetch_all_journal_vouchers',
+    #     'process_method': journal_voucher,
+    #     'filename': 'journal_vouchers.xlsx'
+    # },
+    # 'contra': {
+    #     'fetch_method': 'fetch_all_contra_vouchers',
+    #     'process_method': contra_voucher,
+    #     'filename': 'contra_vouchers.xlsx'
+    # }
 }
 
 
