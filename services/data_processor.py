@@ -325,7 +325,7 @@ def normalize_voucher(xml_content):
         final_column_order = existing_columns + remaining_columns
         df = df[final_column_order]
         
-        df.to_excel('sales.xlsx', index=False)
+        df.to_excel('purchase.xlsx', index=False)
         logger.info(f"Created DataFrame with {len(df)} rows (one per item)")
         logger.info(f"Currency extraction summary: {df['currency'].value_counts().to_dict()}")
         return df

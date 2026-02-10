@@ -12,11 +12,7 @@
                     <COLLECTION NAME="DetailedCompanyList">
                         <TYPE>Company</TYPE>
                         <FETCH>
-                            Name,
-                            StartingFrom,
-                            PhoneNumber,
-                            GSTIN,
-                            Address
+                            *
                         </FETCH>
                     </COLLECTION>
                 </TDLMESSAGE>
