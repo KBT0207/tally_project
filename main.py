@@ -12,7 +12,8 @@ from services.data_processor import (
     contra_voucher,
     sales_return_voucher,       # Sales return
     purchase_voucher,           # Purchase vouchers
-    purchase_return_voucher     # Purchase return
+    purchase_return_voucher,
+    trail_balance_to_xlsx,     # Purchase return
 )
 from datetime import datetime
 import pandas as pd
@@ -381,7 +382,10 @@ for i in comp_list:
         debug=True  # Optional: saves request/response XML files
     )
 
-    if tb_data:
-        # Save or process the trial balance XML
-        with open('trial_balance.xml', 'wb') as f:
-            f.write(tb_data)
+    df = trail_balance_to_xlsx(
+        xml_content=tb_data,
+        company_name=comp_name,
+        start_date='01-10-2025',
+        end_date='30-12-2025',
+        output_filename='trail_balance.xlsx'
+    )

@@ -4,7 +4,6 @@ import re
 from datetime import datetime
 from logging_config import logger
 
-# Handle both relative and absolute imports
 try:
     from .currency_extractor import CurrencyExtractor
 except ImportError:
@@ -12,7 +11,6 @@ except ImportError:
 
 currency_extractor = CurrencyExtractor(default_currency='INR')
 
-# Currency name mapping for display
 CURRENCY_NAMES = {
     'USD': 'US Dollar',
     'EUR': 'Euro',
@@ -69,11 +67,23 @@ CURRENCY_NAMES = {
 }
 
 def get_currency_name(currency_code):
-    """Get full currency name from currency code"""
     return CURRENCY_NAMES.get(currency_code, currency_code)
 
+def clean_text(text):
+    if not text:
+        return ""
+    text = str(text)
+    text = text.replace('&#13;&#10;', ' ')
+    text = text.replace('&#13;', ' ')
+    text = text.replace('&#10;', ' ')
+    text = text.replace('\r\n', ' ')
+    text = text.replace('\r', ' ')
+    text = text.replace('\n', ' ')
+    text = re.sub(r'\s+', ' ', text)
+    text = text.strip()
+    return text
+
 def sanitize_xml_content(content):
-    """Clean and prepare XML content for parsing"""
     if isinstance(content, bytes):
         try:
             content = content.decode('utf-8')
@@ -86,12 +96,11 @@ def sanitize_xml_content(content):
     content = content.replace('G�', 'G£')
     content = content.replace('\ufffd', '£')
     content = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', content)
-    content = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;)', '&amp;', content)
+    content = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;|#\d+;)', '&amp;', content)
     
     return content
 
 def extract_numeric_amount(text):
-    """Extract numeric amount from text"""
     if not text:
         return "0"
     
@@ -107,7 +116,6 @@ def extract_numeric_amount(text):
     return "0"
 
 def extract_rate_value(text):
-    """Extract exchange rate value from text"""
     if not text:
         return "0"
     
@@ -123,7 +131,6 @@ def extract_rate_value(text):
     return "0"
 
 def parse_tally_date(date_str):
-    """Parse Tally date format (YYYYMMDD) to date object"""
     if not date_str or date_str.strip() == "":
         return None
     
@@ -133,7 +140,6 @@ def parse_tally_date(date_str):
         return None
 
 def parse_tally_date_formatted(date_str):
-    """Parse Tally date and return in DD-MM-YYYY format"""
     if not date_str or date_str.strip() == "":
         return None
     
@@ -144,7 +150,6 @@ def parse_tally_date_formatted(date_str):
         return None
 
 def convert_to_float(value):
-    """Convert value to float, return 0.0 if conversion fails"""
     if value is None or value == "":
         return 0.0
     
@@ -154,19 +159,8 @@ def convert_to_float(value):
         return 0.0
 
 def extract_currency_info(amount_text, voucher_level_currency=None):
-    """
-    Extract currency code and name from amount text
-    
-    Args:
-        amount_text: Text containing currency symbol and amount
-        voucher_level_currency: Currency extracted at voucher level (optional)
-        
-    Returns:
-        tuple: (currency_code, currency_name)
-    """
     currency = currency_extractor.extract_currency(amount_text)
     
-    # If extraction returns UNKNOWN or empty, use voucher level currency
     if not currency or currency == 'UNKNOWN':
         currency = voucher_level_currency or 'INR'
     
@@ -175,28 +169,6 @@ def extract_currency_info(amount_text, voucher_level_currency=None):
     return currency, currency_name
 
 def process_simple_voucher(xml_content, voucher_type_name, output_filename):
-    """
-    Generic function to process simple vouchers (Journal, Receipt, Payment, Contra)
-    
-    Args:
-        xml_content: XML content as string or bytes from Tally
-        voucher_type_name: Name of voucher type for logging (e.g., 'journal', 'receipt')
-        output_filename: Output Excel filename
-        
-    Returns:
-        pandas.DataFrame with voucher data formatted with columns:
-        - date: Date in DD-MM-YYYY format
-        - voucher_no: Voucher number
-        - party_name: Ledger name
-        - inr_amount: Amount in INR
-        - forex_amount: Amount in foreign currency (if applicable)
-        - rate_of_exchange: Exchange rate (default 1 for INR)
-        - amount_type: 'Credit' or 'Debit'
-        - currency: Currency code (INR, USD, GBP, etc.)
-        - currency_name: Full currency name
-        - fcy: 'Yes' if foreign currency, 'No' if INR
-        - narration: Voucher narration
-    """
     try:
         xml_content = sanitize_xml_content(xml_content)
         root = ET.fromstring(xml_content.encode('utf-8'))
@@ -206,86 +178,60 @@ def process_simple_voucher(xml_content, voucher_type_name, output_filename):
         all_rows = []
         
         for voucher in vouchers:
-            # Extract voucher-level information
-            voucher_type = voucher.get('VCHTYPE', '')
-            date = voucher.find('DATE').text if voucher.find('DATE') is not None else ""
-            voucher_no = voucher.find('VOUCHERNUMBER').text if voucher.find('VOUCHERNUMBER') is not None else ""
-            narration = voucher.find('NARRATION').text if voucher.find('NARRATION') is not None else ""
+            date_elem = voucher.find('DATE')
+            voucher_no_elem = voucher.find('VOUCHERNUMBER')
+            narration_elem = voucher.find('NARRATION')
             
-            # Format date to DD-MM-YYYY
-            formatted_date = parse_tally_date_formatted(date)
+            date = date_elem.text if date_elem is not None and date_elem.text else ""
+            voucher_no = clean_text(voucher_no_elem.text if voucher_no_elem is not None and voucher_no_elem.text else "")
+            narration = clean_text(narration_elem.text if narration_elem is not None and narration_elem.text else "")
             
-            # Find all ledger entries
+            date_formatted = parse_tally_date_formatted(date)
+            
+            currency_name_elem = voucher.find('.//CURRENCYNAME')
+            voucher_currency = "INR"
+            if currency_name_elem is not None and currency_name_elem.text:
+                voucher_currency = currency_name_elem.text.strip()
+            
             ledger_entries = voucher.findall('.//ALLLEDGERENTRIES.LIST')
             if not ledger_entries:
                 ledger_entries = voucher.findall('.//LEDGERENTRIES.LIST')
             
-            # Extract currency and exchange rate from the voucher
-            voucher_currency = "INR"
-            exchange_rate = 1.0
-            
-            # Check for EXCHGRATE field in voucher
-            exchg_rate_elem = voucher.find('EXCHGRATE')
-            if exchg_rate_elem is not None and exchg_rate_elem.text:
-                try:
-                    exchange_rate = float(extract_numeric_amount(exchg_rate_elem.text))
-                except:
-                    exchange_rate = 1.0
-            
-            # Check for CURRENCYNAME at voucher level
-            currency_name_elem = voucher.find('CURRENCYNAME')
-            if currency_name_elem is not None and currency_name_elem.text:
-                voucher_currency = currency_name_elem.text.strip()
-            
-            # Process each ledger entry
             for ledger in ledger_entries:
-                ledger_name = ledger.find('LEDGERNAME').text if ledger.find('LEDGERNAME') is not None else ""
+                ledger_name_elem = ledger.find('LEDGERNAME')
                 amount_elem = ledger.find('AMOUNT')
-                amount_text = amount_elem.text if amount_elem is not None and amount_elem.text else "0"
+                rate_elem = ledger.find('RATEOFEXCHANGE')
                 
-                # Extract currency and currency name
+                ledger_name = clean_text(ledger_name_elem.text if ledger_name_elem is not None and ledger_name_elem.text else "")
+                amount_text = clean_text(amount_elem.text if amount_elem is not None and amount_elem.text else "0")
+                rate_text = clean_text(rate_elem.text if rate_elem is not None and rate_elem.text else "1")
+                
+                amount = convert_to_float(extract_numeric_amount(amount_text))
+                rate = convert_to_float(extract_rate_value(rate_text))
+                
                 currency, currency_name = extract_currency_info(amount_text, voucher_currency)
                 
-                # Update voucher currency if foreign currency detected
-                if currency and currency != 'UNKNOWN' and currency != "INR" and voucher_currency == "INR":
-                    voucher_currency = currency
+                if rate == 0.0:
+                    rate = 1.0
                 
-                # Extract numeric amount
-                try:
-                    amount = float(extract_numeric_amount(amount_text))
-                except:
-                    amount = 0.0
-                
-                # Determine if this is a credit (positive) or debit (negative) entry
-                amount_type = "Debit" if amount < 0 else "Credit"
-                abs_amount = abs(amount)
-                
-                # Skip zero amounts or empty ledger names
-                if abs_amount == 0 or not ledger_name.strip():
-                    continue
-                
-                # Calculate INR and forex amounts
-                if currency != "INR" and exchange_rate != 1.0:
-                    # If foreign currency, calculate INR amount
-                    forex_amount = abs_amount
-                    inr_amount = abs_amount * exchange_rate
-                    fcy = "Yes"
-                else:
-                    # If INR, both amounts are the same
-                    inr_amount = abs_amount
-                    forex_amount = abs_amount
-                    currency = "INR"
-                    currency_name = "Indian Rupee"
+                if currency == "INR":
+                    inr_amount = abs(amount)
+                    forex_amount = 0.0
                     fcy = "No"
+                else:
+                    forex_amount = abs(amount) / rate if rate != 0 else abs(amount)
+                    inr_amount = abs(amount)
+                    fcy = "Yes"
                 
-                # Create row
+                amount_type = "Credit" if amount < 0 else "Debit"
+                
                 row_data = {
-                    'date': formatted_date,
+                    'date': date_formatted,
                     'voucher_no': voucher_no,
                     'party_name': ledger_name,
-                    'inr_amount': round(inr_amount, 2),
-                    'forex_amount': round(forex_amount, 2),
-                    'rate_of_exchange': exchange_rate,
+                    'inr_amount': inr_amount,
+                    'forex_amount': forex_amount,
+                    'rate_of_exchange': rate,
                     'amount_type': amount_type,
                     'currency': currency,
                     'currency_name': currency_name,
@@ -295,30 +241,19 @@ def process_simple_voucher(xml_content, voucher_type_name, output_filename):
                 
                 all_rows.append(row_data)
         
-        # Create DataFrame
         df = pd.DataFrame(all_rows)
         
-        # Reorder columns to match desired output
-        column_order = [
-            'date',
-            'voucher_no',
-            'party_name',
-            'inr_amount',
-            'forex_amount',
-            'rate_of_exchange',
-            'amount_type',
-            'currency',
-            'currency_name',
-            'fcy',
-            'narration'
-        ]
-        
         if len(df) > 0:
+            column_order = ['date', 'voucher_no', 'party_name', 'inr_amount', 'forex_amount', 
+                          'rate_of_exchange', 'amount_type', 'currency', 'currency_name', 'fcy', 'narration']
             df = df[column_order]
         
-        logger.info(f"Created {voucher_type_name} voucher DataFrame with {len(df)} rows")
-        logger.info(f"Currency distribution: {df['currency'].value_counts().to_dict() if len(df) > 0 else 'No data'}")
+        logger.info(f"Created {voucher_type_name} DataFrame with {len(df)} rows")
+        if len(df) > 0:
+            logger.info(f"Currency distribution: {df['currency'].value_counts().to_dict()}")
+        
         df.to_excel(output_filename, index=False)
+        logger.info(f"Saved {voucher_type_name} to {output_filename}")
         
         return df
         
@@ -326,38 +261,19 @@ def process_simple_voucher(xml_content, voucher_type_name, output_filename):
         logger.error(f"Error parsing {voucher_type_name} voucher: {e}", exc_info=True)
         return pd.DataFrame()
 
-
-# Wrapper functions for each voucher type
 def journal_voucher(xml_content):
-    """Process journal vouchers"""
     return process_simple_voucher(xml_content, 'journal', 'journal.xlsx')
 
 def receipt_voucher(xml_content):
-    """Process receipt vouchers"""
     return process_simple_voucher(xml_content, 'receipt', 'receipt.xlsx')
 
 def payment_voucher(xml_content):
-    """Process payment vouchers"""
     return process_simple_voucher(xml_content, 'payment', 'payment.xlsx')
 
 def contra_voucher(xml_content):
-    """Process contra vouchers"""
     return process_simple_voucher(xml_content, 'contra', 'contra.xlsx')
 
-
 def process_sales_purchase_voucher(xml_content, voucher_type_name, output_filename, is_return=False):
-    """
-    Generic function to process sales/purchase vouchers
-    
-    Args:
-        xml_content: XML content as string or bytes from Tally
-        voucher_type_name: Name of voucher type ('sales', 'purchase', 'sales_return', 'purchase_return')
-        output_filename: Output Excel filename
-        is_return: True if this is a return voucher
-        
-    Returns:
-        pandas.DataFrame with voucher data
-    """
     try:
         xml_content = sanitize_xml_content(xml_content)
         root = ET.fromstring(xml_content.encode('utf-8'))
@@ -367,25 +283,26 @@ def process_sales_purchase_voucher(xml_content, voucher_type_name, output_filena
         all_rows = []
         
         for voucher in vouchers:
-            voucher_key = voucher.get('VCHKEY', '')
-            voucher_type = voucher.get('VCHTYPE', '')
-            date = voucher.find('DATE').text if voucher.find('DATE') is not None else ""
-            voucher_no = voucher.find('VOUCHERNUMBER').text if voucher.find('VOUCHERNUMBER') is not None else ""
-            reference_no = voucher.find('REFERENCE').text if voucher.find('REFERENCE') is not None else ""
-            party_name = voucher.find('PARTYNAME').text if voucher.find('PARTYNAME') is not None else ""
-            narration = voucher.find('NARRATION').text if voucher.find('NARRATION') is not None else ""
-            party_gstin = voucher.find('PARTYGSTIN').text if voucher.find('PARTYGSTIN') is not None else ""
-            place_of_supply = voucher.find('PLACEOFSUPPLY').text if voucher.find('PLACEOFSUPPLY') is not None else ""
-            entered_by = voucher.find('ENTEREDBY').text if voucher.find('ENTEREDBY') is not None else ""
-            guid = voucher.find('GUID').text if voucher.find('GUID') is not None else ""
-            basic_ship_doc_no = voucher.find('BASICSHIPDOCUMENTNO').text if voucher.find('BASICSHIPDOCUMENTNO') is not None else ""
-            alter_id = voucher.find('ALTERID').text if voucher.find('ALTERID') is not None else ""
-            master_id = voucher.find('MASTERID').text if voucher.find('MASTERID') is not None else ""
-            basic_buyer_name = voucher.find('BASICBUYERNAME').text if voucher.find('BASICBUYERNAME') is not None else ""
+            voucher_key = clean_text(voucher.get('VCHKEY', ''))
+            voucher_type = clean_text(voucher.get('VCHTYPE', ''))
             
-            # Extract voucher-level currency
+            date = voucher.findtext('DATE', '').strip()
+            voucher_no = clean_text(voucher.findtext('VOUCHERNUMBER', ''))
+            reference_no = clean_text(voucher.findtext('REFERENCE', ''))
+            party_name = clean_text(voucher.findtext('PARTYNAME', ''))
+            place_of_supply = clean_text(voucher.findtext('.//PLACEOFSUPPLY', ''))
+            narration = clean_text(voucher.findtext('NARRATION', ''))
+            entered_by = clean_text(voucher.findtext('ENTEREDBY', ''))
+            guid = clean_text(voucher.findtext('GUID', ''))
+            
+            basic_buyer_name = clean_text(voucher.findtext('.//BASICBUYERNAME', ''))
+            basic_ship_doc_no = clean_text(voucher.findtext('.//BASICSHIPPINGDOCUMENTNO', ''))
+            party_gstin = clean_text(voucher.findtext('.//PARTYGSTIN', ''))
+            alter_id = clean_text(voucher.findtext('ALTERID', ''))
+            master_id = clean_text(voucher.findtext('MASTERID', ''))
+            
+            currency_name_elem = voucher.find('.//CURRENCYNAME')
             voucher_currency = "INR"
-            currency_name_elem = voucher.find('CURRENCYNAME')
             if currency_name_elem is not None and currency_name_elem.text:
                 voucher_currency = currency_name_elem.text.strip()
             
@@ -420,13 +337,11 @@ def process_sales_purchase_voucher(xml_content, voucher_type_name, output_filena
                 'other_amt': 0.0
             }
             
-            # Extract currency from ledger entries if not at voucher level
             for ledger in ledger_entries:
-                ledger_name = ledger.find('LEDGERNAME').text if ledger.find('LEDGERNAME') is not None else ""
+                ledger_name = clean_text(ledger.find('LEDGERNAME').text if ledger.find('LEDGERNAME') is not None else "")
                 amount_elem = ledger.find('AMOUNT')
-                amount_text = amount_elem.text if amount_elem is not None and amount_elem.text else "0"
+                amount_text = clean_text(amount_elem.text if amount_elem is not None and amount_elem.text else "0")
                 
-                # Extract currency info
                 if voucher_currency == "INR":
                     currency, currency_name = extract_currency_info(amount_text)
                     if currency and currency != 'UNKNOWN' and currency != 'INR':
@@ -459,18 +374,17 @@ def process_sales_purchase_voucher(xml_content, voucher_type_name, output_filena
             
             if inventory_entries:
                 for inv in inventory_entries:
-                    item_name = inv.find('STOCKITEMNAME').text if inv.find('STOCKITEMNAME') is not None else ""
+                    item_name = clean_text(inv.find('STOCKITEMNAME').text if inv.find('STOCKITEMNAME') is not None else "")
                     qty_elem = inv.find('ACTUALQTY')
                     rate_elem = inv.find('RATE')
                     amount_elem = inv.find('AMOUNT')
                     discount_elem = inv.find('DISCOUNT')
                     
-                    qty = qty_elem.text if qty_elem is not None and qty_elem.text else "0"
-                    rate = rate_elem.text if rate_elem is not None and rate_elem.text else "0"
-                    amount_text = amount_elem.text if amount_elem is not None and amount_elem.text else "0"
-                    discount = discount_elem.text if discount_elem is not None and discount_elem.text else "0"
+                    qty = clean_text(qty_elem.text if qty_elem is not None and qty_elem.text else "0")
+                    rate = clean_text(rate_elem.text if rate_elem is not None and rate_elem.text else "0")
+                    amount_text = clean_text(amount_elem.text if amount_elem is not None and amount_elem.text else "0")
+                    discount = clean_text(discount_elem.text if discount_elem is not None and discount_elem.text else "0")
                     
-                    # Extract currency from inventory amount
                     item_currency, item_currency_name = extract_currency_info(amount_text, voucher_currency)
                     
                     qty_numeric = extract_numeric_amount(qty)
@@ -492,7 +406,6 @@ def process_sales_purchase_voucher(xml_content, voucher_type_name, output_filena
                     
                     all_rows.append(row_data)
             else:
-                # No inventory entries, create a row with voucher-level data
                 currency_name = get_currency_name(voucher_currency)
                 row_data = {
                     **base_voucher_data,
@@ -520,20 +433,69 @@ def process_sales_purchase_voucher(xml_content, voucher_type_name, output_filena
         logger.error(f"Error parsing {voucher_type_name} voucher: {e}", exc_info=True)
         return pd.DataFrame()
 
-
-# Wrapper functions for sales/purchase vouchers
 def normalize_voucher(xml_content):
-    """Process sales vouchers"""
     return process_sales_purchase_voucher(xml_content, 'sales', 'sales.xlsx', is_return=False)
 
 def sales_return_voucher(xml_content):
-    """Process sales return vouchers"""
     return process_sales_purchase_voucher(xml_content, 'sales_return', 'sales_return.xlsx', is_return=True)
 
 def purchase_voucher(xml_content):
-    """Process purchase vouchers"""
     return process_sales_purchase_voucher(xml_content, 'purchase', 'purchase.xlsx', is_return=False)
 
 def purchase_return_voucher(xml_content):
-    """Process purchase return vouchers"""
     return process_sales_purchase_voucher(xml_content, 'purchase_return', 'purchase_return.xlsx', is_return=True)
+
+def trail_balance_to_xlsx(xml_content, company_name, start_date, end_date, output_filename='trail_balance.xlsx'):
+    try:
+        xml_content = sanitize_xml_content(xml_content)
+        root = ET.fromstring(xml_content.encode('utf-8'))
+        
+        ledgers = root.findall('.//COLLECTION/LEDGER')
+        logger.info(f"Found {len(ledgers)} ledgers in trial balance")
+        
+        all_rows = []
+        
+        for ledger in ledgers:
+            ledger_name = clean_text(ledger.get('NAME', ''))
+            
+            if not ledger_name:
+                continue
+            
+            opening_balance_text = ledger.findtext('OPENINGBALANCE', '0')
+            closing_balance_text = ledger.findtext('CLOSINGBALANCE', '0')
+            
+            opening_balance = convert_to_float(opening_balance_text)
+            closing_balance = convert_to_float(closing_balance_text)
+            
+            opening_balance = abs(opening_balance)
+            closing_balance = abs(closing_balance)
+            
+            net_transactions = closing_balance - opening_balance
+            
+            row_data = {
+                'particulars': ledger_name,
+                'opening_balance': opening_balance,
+                'net_transactions': net_transactions,
+                'closing_balance': closing_balance,
+                'material_centre': company_name,
+                'start_date': start_date,
+                'end_date': end_date
+            }
+            
+            all_rows.append(row_data)
+        
+        df = pd.DataFrame(all_rows)
+        
+        if len(df) > 0:
+            df = df.sort_values('particulars').reset_index(drop=True)
+        
+        logger.info(f"Created trail balance DataFrame with {len(df)} rows")
+        
+        df.to_excel(output_filename, index=False)
+        logger.info(f"Saved trail balance to {output_filename}")
+        
+        return df
+        
+    except Exception as e:
+        logger.error(f"Error processing trail balance: {e}", exc_info=True)
+        return pd.DataFrame()
