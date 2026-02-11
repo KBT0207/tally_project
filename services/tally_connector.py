@@ -370,6 +370,17 @@ class TallyConnector:
             to_date,
             debug
         )
+    
+    def fetch_trial_balance(self, company_name: str, from_date: Optional[str] = None,
+                        to_date: Optional[str] = None, debug: bool = False) -> Optional[bytes]:
+        return self._fetch_data(
+            'utils/reports/tb.xml',
+            'Trial Balance',
+            company_name,
+            from_date,
+            to_date,
+            debug
+        )
 
     @staticmethod
     def parse_tally_date(date_str: str) -> Optional[datetime]:
