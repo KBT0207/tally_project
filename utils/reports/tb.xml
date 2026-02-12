@@ -1,24 +1,29 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <ENVELOPE>
     <HEADER>
-        <TALLYREQUEST>Export Data</TALLYREQUEST>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>Trial Balance</ID>
     </HEADER>
     <BODY>
-        <EXPORTDATA>
-            <REQUESTDESC>
-                <REPORTNAME>Trial Balance</REPORTNAME>
-                <STATICVARIABLES>
-                    <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-                    <SVFROMDATE>20240401</SVFROMDATE>
-                    <SVTODATE>20250331</SVTODATE>
-
-                    <EXPLODEFLAG>Yes</EXPLODEFLAG>
-                    <ISLEDGERWISE>Yes</ISLEDGERWISE>
-                    <ISDETAILED>Yes</ISDETAILED>
-                    <SHOWOPENING>Yes</SHOWOPENING>
-                    <SHOWCLOSING>Yes</SHOWCLOSING>
-                </STATICVARIABLES>
-            </REQUESTDESC>
-        </EXPORTDATA>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+                <SVFROMDATE type="Date">20240401</SVFROMDATE>
+                <SVTODATE type="Date">20240930</SVTODATE>
+            </STATICVARIABLES>
+            <TDL>
+                <TDLMESSAGE>
+                    <COLLECTION NAME="Trial Balance">
+                        <TYPE>Ledger</TYPE>
+                        <FETCH>Name, OpeningBalance, ClosingBalance</FETCH>
+                    </COLLECTION>
+                    
+                    <OBJECT NAME="Ledger">
+                        <FETCH>Name, OpeningBalance, ClosingBalance</FETCH>
+                    </OBJECT>
+                </TDLMESSAGE>
+            </TDL>
+        </DESC>
     </BODY>
 </ENVELOPE>
