@@ -153,11 +153,7 @@ def determine_change_status(alter_id, master_id):
         return "Unknown"
 
 # METHOD 1: Process ledger-based vouchers (Journal, Receipt, Payment, Contra)
-def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name, output_filename):
-    """
-    Process vouchers with ledger entries only (Journal, Receipt, Payment, Contra)
-    Returns DataFrame with party-wise transactions
-    """
+def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name,output_filename):
     with ProcessingTimer(f"{voucher_type_name} voucher processing"):
         try:
             # Validate input
@@ -228,11 +224,9 @@ def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name, output_filena
                     if currency == "INR":
                         inr_amount = abs(amount)
                         forex_amount = 0.0
-                        fcy = "No"
                     else:
                         forex_amount = abs(amount) / rate if rate != 0 else abs(amount)
                         inr_amount = abs(amount)
-                        fcy = "Yes"
                     
                     amount_type = "Credit" if amount < 0 else "Debit"
                     
@@ -245,7 +239,6 @@ def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name, output_filena
                         'rate_of_exchange': rate,
                         'amount_type': amount_type,
                         'currency': currency,
-                        'fcy': fcy,
                         'narration': narration,
                         'alter_id': alter_id,
                         'master_id': master_id,
@@ -259,18 +252,10 @@ def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name, output_filena
             
             if len(df) > 0:
                 column_order = ['date', 'voucher_no', 'party_name', 'inr_amount', 'forex_amount', 
-                              'rate_of_exchange', 'amount_type', 'currency', 'fcy', 
+                              'rate_of_exchange', 'amount_type', 'currency', 
                               'narration', 'alter_id', 'master_id', 'change_status', 'guid']
                 df = df[column_order]
-            
-            logger.info(f"Created {voucher_type_name} DataFrame with {len(df)} rows")
-            if len(df) > 0:
-                logger.info(f"Currency distribution: {df['currency'].value_counts().to_dict()}")
-                logger.info(f"Change status: {df['change_status'].value_counts().to_dict()}")
-            
-            df.to_excel(output_filename, index=False)
-            logger.info(f"Saved {voucher_type_name} to {output_filename}")
-            
+                df.to_excel(f"{output_filename}.xlsx")
             return df
             
         except ET.ParseError as e:
