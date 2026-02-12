@@ -12,61 +12,6 @@ except ImportError:
 
 currency_extractor = CurrencyExtractor(default_currency='INR')
 
-CURRENCY_NAMES = {
-    'USD': 'US Dollar',
-    'EUR': 'Euro',
-    'GBP': 'British Pound',
-    'JPY': 'Japanese Yen',
-    'CNY': 'Chinese Yuan',
-    'INR': 'Indian Rupee',
-    'CHF': 'Swiss Franc',
-    'CAD': 'Canadian Dollar',
-    'AUD': 'Australian Dollar',
-    'NZD': 'New Zealand Dollar',
-    'KRW': 'South Korean Won',
-    'SGD': 'Singapore Dollar',
-    'HKD': 'Hong Kong Dollar',
-    'NOK': 'Norwegian Krone',
-    'SEK': 'Swedish Krona',
-    'DKK': 'Danish Krone',
-    'PLN': 'Polish Zloty',
-    'THB': 'Thai Baht',
-    'MYR': 'Malaysian Ringgit',
-    'IDR': 'Indonesian Rupiah',
-    'PHP': 'Philippine Peso',
-    'MXN': 'Mexican Peso',
-    'BRL': 'Brazilian Real',
-    'ARS': 'Argentine Peso',
-    'CLP': 'Chilean Peso',
-    'COP': 'Colombian Peso',
-    'ZAR': 'South African Rand',
-    'RUB': 'Russian Ruble',
-    'TRY': 'Turkish Lira',
-    'AED': 'UAE Dirham',
-    'SAR': 'Saudi Riyal',
-    'QAR': 'Qatari Riyal',
-    'KWD': 'Kuwaiti Dinar',
-    'ILS': 'Israeli Shekel',
-    'EGP': 'Egyptian Pound',
-    'PKR': 'Pakistani Rupee',
-    'BDT': 'Bangladeshi Taka',
-    'LKR': 'Sri Lankan Rupee',
-    'NPR': 'Nepalese Rupee',
-    'VND': 'Vietnamese Dong',
-    'KZT': 'Kazakhstani Tenge',
-    'UAH': 'Ukrainian Hryvnia',
-    'NGN': 'Nigerian Naira',
-    'KES': 'Kenyan Shilling',
-    'GHS': 'Ghanaian Cedi',
-    'MAD': 'Moroccan Dirham',
-    'TWD': 'New Taiwan Dollar',
-    'CZK': 'Czech Koruna',
-    'HUF': 'Hungarian Forint',
-    'RON': 'Romanian Leu',
-    'BGN': 'Bulgarian Lev',
-    'HRK': 'Croatian Kuna',
-}
-
 class ProcessingTimer:
     def __init__(self, process_name):
         self.process_name = process_name
@@ -88,9 +33,6 @@ class ProcessingTimer:
             return self.end_time - self.start_time
         return 0
 
-def get_currency_name(currency_code):
-    return CURRENCY_NAMES.get(currency_code, currency_code)
-
 def clean_text(text):
     if not text:
         return ""
@@ -106,6 +48,11 @@ def clean_text(text):
     return text
 
 def sanitize_xml_content(content):
+    """Sanitize XML content with proper None handling"""
+    if content is None:
+        logger.error("XML content is None")
+        return ""
+    
     if isinstance(content, bytes):
         try:
             content = content.decode('utf-8')
@@ -115,6 +62,7 @@ def sanitize_xml_content(content):
             except UnicodeDecodeError:
                 content = content.decode('utf-8', errors='ignore')
     
+    content = str(content)  # Ensure it's a string
     content = content.replace('G�', 'G£')
     content = content.replace('\ufffd', '£')
     content = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', content)
@@ -180,15 +128,13 @@ def convert_to_float(value):
     except:
         return 0.0
 
-def extract_currency_info(amount_text, voucher_level_currency=None):
+def extract_currency(amount_text, voucher_level_currency=None):
     currency = currency_extractor.extract_currency(amount_text)
     
     if not currency or currency == 'UNKNOWN':
         currency = voucher_level_currency or 'INR'
     
-    currency_name = get_currency_name(currency)
-    
-    return currency, currency_name
+    return currency
 
 def determine_change_status(alter_id, master_id):
     try:
@@ -206,13 +152,32 @@ def determine_change_status(alter_id, master_id):
     except:
         return "Unknown"
 
-def process_simple_voucher(xml_content, voucher_type_name, output_filename):
+# METHOD 1: Process ledger-based vouchers (Journal, Receipt, Payment, Contra)
+def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name, output_filename):
+    """
+    Process vouchers with ledger entries only (Journal, Receipt, Payment, Contra)
+    Returns DataFrame with party-wise transactions
+    """
     with ProcessingTimer(f"{voucher_type_name} voucher processing"):
         try:
+            # Validate input
+            if xml_content is None or (isinstance(xml_content, str) and xml_content.strip() == ""):
+                logger.warning(f"Empty or None XML content for {voucher_type_name}")
+                return pd.DataFrame()
+            
             xml_content = sanitize_xml_content(xml_content)
+            
+            if not xml_content or xml_content.strip() == "":
+                logger.warning(f"Empty XML content after sanitization for {voucher_type_name}")
+                return pd.DataFrame()
+            
             root = ET.fromstring(xml_content.encode('utf-8'))
             vouchers = root.findall(".//VOUCHER")
             logger.info(f"Found {len(vouchers)} {voucher_type_name} vouchers")
+            
+            if len(vouchers) == 0:
+                logger.warning(f"No vouchers found for {voucher_type_name}")
+                return pd.DataFrame()
             
             all_rows = []
             
@@ -255,7 +220,7 @@ def process_simple_voucher(xml_content, voucher_type_name, output_filename):
                     amount = convert_to_float(extract_numeric_amount(amount_text))
                     rate = convert_to_float(extract_rate_value(rate_text))
                     
-                    currency, currency_name = extract_currency_info(amount_text, voucher_currency)
+                    currency = extract_currency(amount_text, voucher_currency)
                     
                     if rate == 0.0:
                         rate = 1.0
@@ -280,7 +245,6 @@ def process_simple_voucher(xml_content, voucher_type_name, output_filename):
                         'rate_of_exchange': rate,
                         'amount_type': amount_type,
                         'currency': currency,
-                        'currency_name': currency_name,
                         'fcy': fcy,
                         'narration': narration,
                         'alter_id': alter_id,
@@ -295,7 +259,7 @@ def process_simple_voucher(xml_content, voucher_type_name, output_filename):
             
             if len(df) > 0:
                 column_order = ['date', 'voucher_no', 'party_name', 'inr_amount', 'forex_amount', 
-                              'rate_of_exchange', 'amount_type', 'currency', 'currency_name', 'fcy', 
+                              'rate_of_exchange', 'amount_type', 'currency', 'fcy', 
                               'narration', 'alter_id', 'master_id', 'change_status', 'guid']
                 df = df[column_order]
             
@@ -309,29 +273,39 @@ def process_simple_voucher(xml_content, voucher_type_name, output_filename):
             
             return df
             
+        except ET.ParseError as e:
+            logger.error(f"XML Parse Error in {voucher_type_name}: {e}")
+            return pd.DataFrame()
         except Exception as e:
-            logger.error(f"Error parsing {voucher_type_name} voucher: {e}", exc_info=True)
+            logger.error(f"Error parsing {voucher_type_name} voucher: {e}")
             return pd.DataFrame()
 
-def journal_voucher(xml_content):
-    return process_simple_voucher(xml_content, 'journal', 'journal.xlsx')
-
-def receipt_voucher(xml_content):
-    return process_simple_voucher(xml_content, 'receipt', 'receipt.xlsx')
-
-def payment_voucher(xml_content):
-    return process_simple_voucher(xml_content, 'payment', 'payment.xlsx')
-
-def contra_voucher(xml_content):
-    return process_simple_voucher(xml_content, 'contra', 'contra.xlsx')
-
-def process_sales_purchase_voucher(xml_content, voucher_type_name, output_filename, is_return=False):
+# METHOD 2: Process inventory vouchers (Sales, Sales Return, Purchase, Purchase Return)
+def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name, output_filename):
+    """
+    Process vouchers with inventory items (Sales, Sales Return, Purchase, Purchase Return)
+    Returns DataFrame with item-wise details and tax breakup
+    """
     with ProcessingTimer(f"{voucher_type_name} voucher processing"):
         try:
+            # Validate input
+            if xml_content is None or (isinstance(xml_content, str) and xml_content.strip() == ""):
+                logger.warning(f"Empty or None XML content for {voucher_type_name}")
+                return pd.DataFrame()
+            
             xml_content = sanitize_xml_content(xml_content)
+            
+            if not xml_content or xml_content.strip() == "":
+                logger.warning(f"Empty XML content after sanitization for {voucher_type_name}")
+                return pd.DataFrame()
+            
             root = ET.fromstring(xml_content.encode('utf-8'))
             vouchers = root.findall(".//VOUCHER")
             logger.info(f"Found {len(vouchers)} {voucher_type_name} vouchers")
+            
+            if len(vouchers) == 0:
+                logger.warning(f"No vouchers found for {voucher_type_name}")
+                return pd.DataFrame()
             
             all_rows = []
             
@@ -399,7 +373,7 @@ def process_sales_purchase_voucher(xml_content, voucher_type_name, output_filena
                     amount_text = clean_text(amount_elem.text if amount_elem is not None and amount_elem.text else "0")
                     
                     if voucher_currency == "INR":
-                        currency, currency_name = extract_currency_info(amount_text)
+                        currency = extract_currency(amount_text)
                         if currency and currency != 'UNKNOWN' and currency != 'INR':
                             voucher_currency = currency
                     
@@ -441,7 +415,7 @@ def process_sales_purchase_voucher(xml_content, voucher_type_name, output_filena
                         amount_text = clean_text(amount_elem.text if amount_elem is not None and amount_elem.text else "0")
                         discount = clean_text(discount_elem.text if discount_elem is not None and discount_elem.text else "0")
                         
-                        item_currency, item_currency_name = extract_currency_info(amount_text, voucher_currency)
+                        item_currency = extract_currency(amount_text, voucher_currency)
                         
                         qty_numeric = extract_numeric_amount(qty)
                         rate_numeric = extract_rate_value(rate)
@@ -456,13 +430,11 @@ def process_sales_purchase_voucher(xml_content, voucher_type_name, output_filena
                             'amount': amount_numeric,
                             'discount': discount_numeric,
                             'currency': item_currency,
-                            'currency_name': item_currency_name,
                             **tax_data
                         }
                         
                         all_rows.append(row_data)
                 else:
-                    currency_name = get_currency_name(voucher_currency)
                     row_data = {
                         **base_voucher_data,
                         'item_name': '',
@@ -471,7 +443,6 @@ def process_sales_purchase_voucher(xml_content, voucher_type_name, output_filena
                         'amount': '0',
                         'discount': '0',
                         'currency': voucher_currency,
-                        'currency_name': currency_name,
                         **tax_data
                     }
                     all_rows.append(row_data)
@@ -486,30 +457,39 @@ def process_sales_purchase_voucher(xml_content, voucher_type_name, output_filena
             
             return df
             
+        except ET.ParseError as e:
+            logger.error(f"XML Parse Error in {voucher_type_name}: {e}")
+            return pd.DataFrame()
         except Exception as e:
-            logger.error(f"Error parsing {voucher_type_name} voucher: {e}", exc_info=True)
+            logger.error(f"Error parsing {voucher_type_name} voucher: {e}")
             return pd.DataFrame()
 
-def normalize_voucher(xml_content):
-    return process_sales_purchase_voucher(xml_content, 'sales', 'sales.xlsx', is_return=False)
-
-def sales_return_voucher(xml_content):
-    return process_sales_purchase_voucher(xml_content, 'sales_return', 'sales_return.xlsx', is_return=True)
-
-def purchase_voucher(xml_content):
-    return process_sales_purchase_voucher(xml_content, 'purchase', 'purchase.xlsx', is_return=False)
-
-def purchase_return_voucher(xml_content):
-    return process_sales_purchase_voucher(xml_content, 'purchase_return', 'purchase_return.xlsx', is_return=True)
-
 def trial_balance_to_xlsx(xml_content, company_name, start_date, end_date, output_filename='trial_balance.xlsx'):
-    with ProcessingTimer(f"Trail balance processing for {company_name}"):
+    """
+    Process trial balance ledgers
+    Returns DataFrame with opening, closing, and net transaction balances
+    """
+    with ProcessingTimer(f"Trial balance processing for {company_name}"):
         try:
+            # Validate input
+            if xml_content is None or (isinstance(xml_content, str) and xml_content.strip() == ""):
+                logger.warning(f"Empty or None XML content for trial balance")
+                return pd.DataFrame()
+            
             xml_content = sanitize_xml_content(xml_content)
+            
+            if not xml_content or xml_content.strip() == "":
+                logger.warning(f"Empty XML content after sanitization for trial balance")
+                return pd.DataFrame()
+            
             root = ET.fromstring(xml_content.encode('utf-8'))
             
             ledgers = root.findall('.//COLLECTION/LEDGER')
             logger.info(f"Found {len(ledgers)} ledgers in trial balance")
+            
+            if len(ledgers) == 0:
+                logger.warning(f"No ledgers found in trial balance")
+                return pd.DataFrame()
             
             all_rows = []
             
@@ -543,7 +523,7 @@ def trial_balance_to_xlsx(xml_content, company_name, start_date, end_date, outpu
                     'net_transactions': net_transactions,
                     'closing_balance': closing_balance,
                     'change_indicator': change_indicator,
-                    'material_centre': company_name,
+                    'company_name': company_name,
                     'start_date': start_date,
                     'end_date': end_date
                 }
@@ -564,6 +544,9 @@ def trial_balance_to_xlsx(xml_content, company_name, start_date, end_date, outpu
             
             return df
             
+        except ET.ParseError as e:
+            logger.error(f"XML Parse Error in trial balance: {e}")
+            return pd.DataFrame()
         except Exception as e:
-            logger.error(f"Error processing trail balance: {e}", exc_info=True)
+            logger.error(f"Error processing trial balance: {e}")
             return pd.DataFrame()

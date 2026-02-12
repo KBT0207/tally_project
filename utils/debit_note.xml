@@ -14,16 +14,23 @@
                 <SVFROMDATE>20250101</SVFROMDATE>
                 <SVTODATE>20251231</SVTODATE>
             </STATICVARIABLES>
+
             <TDL>
                 <TDLMESSAGE>
+
                     <COLLECTION NAME="DebitNoteVouchers">
-                        <TYPE>Vouchers</TYPE>
+                        <TYPE>Voucher</TYPE>
                         <FETCH>*</FETCH>
                         <FILTER>IsDebitNoteVoucher</FILTER>
                     </COLLECTION>
-                    <SYSTEM TYPE="Formulae" NAME="IsDebitNoteVoucher">$$IsDebitNote:$VoucherTypeName</s>
+
+                    <SYSTEM TYPE="Formulae" NAME="IsDebitNoteVoucher">
+                        $$IsDebitNote:$VoucherTypeName
+                    </SYSTEM>
+
                 </TDLMESSAGE>
             </TDL>
+
         </DESC>
     </BODY>
 </ENVELOPE>

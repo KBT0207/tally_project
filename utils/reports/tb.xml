@@ -17,11 +17,9 @@
                     <COLLECTION NAME="Trial Balance">
                         <TYPE>Ledger</TYPE>
                         <FETCH>Name, OpeningBalance, ClosingBalance</FETCH>
+                        <COMPUTE>PeriodDebit: ##LedgerDebitPeriod</COMPUTE>
+                        <COMPUTE>PeriodCredit: ##LedgerCreditPeriod</COMPUTE>
                     </COLLECTION>
-                    
-                    <OBJECT NAME="Ledger">
-                        <FETCH>Name, OpeningBalance, ClosingBalance</FETCH>
-                    </OBJECT>
                 </TDLMESSAGE>
             </TDL>
         </DESC>
