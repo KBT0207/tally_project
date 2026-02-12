@@ -78,10 +78,15 @@ Thumbs.db
 *.bak
 *.old
 
+# =========================
+# Data files (Ignore globally)
+# =========================
 *.xlsx
 *.csv
-
 *.xml
 
+# =========================
+# Allow XML files inside utils folder
+# =========================
 !utils/
-!utils/**/*.xmlxml file/ledger_learn.xml
+!utils/**/*.xml
