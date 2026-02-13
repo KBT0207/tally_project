@@ -479,19 +479,33 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                     amount_text = clean_text(ledger.findtext('AMOUNT', '0'))
                     amount = convert_to_float(extract_numeric_amount(amount_text))
                     
-                    if re.search(r'cgst\s*output', ledger_name_lower):
+                    # Match CGST followed by "Input" or "Output" (with any @, %, spaces, numbers)
+                    # Examples: "CGST Input @9%", "CGST Output @18%", "CGST Input @ 2.5 %", "cgst output @28%"
+                    if re.search(r'cgst\s*(?:input|output)', ledger_name_lower):
                         tax_data['cgst_amt'] += abs(amount)
-                    elif re.search(r'sgst\s*output', ledger_name_lower):
+                    # Match SGST followed by "Input" or "Output" (with any @, %, spaces, numbers)
+                    # Examples: "SGST Input @9%", "SGST Output @18%", "SGST Input @2.5%", "sgst output"
+                    elif re.search(r'sgst\s*(?:input|output)', ledger_name_lower):
                         tax_data['sgst_amt'] += abs(amount)
-                    elif re.search(r'igst\s*output', ledger_name_lower):
+                    # Match IGST followed by "Input" or "Output" (with any @, %, spaces, numbers)
+                    # Examples: "IGST Input @18%", "IGST Output @28%", "IGST Input @ 6 %", "igst output"
+                    elif re.search(r'igst\s*(?:input|output)', ledger_name_lower):
                         tax_data['igst_amt'] += abs(amount)
+                    # Match Freight
                     elif re.search(r'freight', ledger_name_lower):
                         tax_data['freight_amt'] += abs(amount)
+                    # Match DCA (Document Charges, Duty Charges, etc.)
                     elif re.search(r'dca', ledger_name_lower):
                         tax_data['dca_amt'] += abs(amount)
+                    # Match Clearing & Forwarding (with or without &, spaces)
                     elif re.search(r'clearing\s*&?\s*forwarding', ledger_name_lower):
                         tax_data['cf_amt'] += abs(amount)
-                    elif amount > 0 and ledger_name.strip() != "" and not re.search(r'sales|party|customer', ledger_name_lower):
+                    # Other charges - exclude party ledger and system ledgers
+                    # Include all other ledgers regardless of amount sign (expense ledgers can be positive or negative in XML)
+                    elif (ledger_name.strip() != "" and 
+                          ledger_name != party_name and  # Exclude the party ledger
+                          abs(amount) > 0.01 and  # Exclude zero or near-zero amounts
+                          not re.search(r'round', ledger_name_lower)):  # Exclude Round Off
                         tax_data['other_amt'] += abs(amount)
                 
                 # Process inventory entries
@@ -555,7 +569,15 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
             df = pd.DataFrame(all_rows)
             
             logger.info(f"Created {voucher_type_name} DataFrame with {len(df)} rows")
+            columns = ["date", "voucher_number", "reference", "voucher_type", 
+                    "party_name", "item_name", "quantity", "rate",
+                    "amount", "discount", "cgst_amt", "sgst_amt", "igst_amt", 
+                    "freight_amt", "dca_amt", "cf_amt", "other_amt", "currency", 
+                    "exchange_rate", "narration", "guid", "alter_id", "master_id", 
+                    "change_status"]
+
             if len(df) > 0:
+                df = df[columns]
                 logger.info(f"Currency distribution: {df['currency'].value_counts().to_dict()}")
                 logger.info(f"Change status: {df['change_status'].value_counts().to_dict()}")
             
@@ -572,98 +594,11 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
             logger.error(traceback.format_exc())
             return pd.DataFrame()
 
-def trial_balance_to_xlsx(xml_content, company_name, start_date, end_date, output_filename='trial_balance.xlsx'):
-    """
-    Process trial balance ledgers
-    Returns DataFrame with opening, closing, and net transaction balances
-    """
-    with ProcessingTimer(f"Trial balance processing for {company_name}"):
-        try:
-            if xml_content is None or (isinstance(xml_content, str) and xml_content.strip() == ""):
-                logger.warning(f"Empty or None XML content for trial balance")
-                return pd.DataFrame()
-            
-            xml_content = sanitize_xml_content(xml_content)
-            
-            if not xml_content or xml_content.strip() == "":
-                logger.warning(f"Empty XML content after sanitization for trial balance")
-                return pd.DataFrame()
-            
-            root = ET.fromstring(xml_content.encode('utf-8'))
-            
-            ledgers = root.findall('.//COLLECTION/LEDGER')
-            logger.info(f"Found {len(ledgers)} ledgers in trial balance")
-            
-            if len(ledgers) == 0:
-                logger.warning(f"No ledgers found in trial balance")
-                return pd.DataFrame()
-            
-            all_rows = []
-            
-            for ledger in ledgers:
-                ledger_name = clean_text(ledger.get('NAME', ''))
-                
-                if not ledger_name:
-                    continue
-                
-                opening_balance_text = ledger.findtext('OPENINGBALANCE', '0')
-                closing_balance_text = ledger.findtext('CLOSINGBALANCE', '0')
-                
-                opening_balance = convert_to_float(opening_balance_text)
-                closing_balance = convert_to_float(closing_balance_text)
-                
-                opening_balance = abs(opening_balance)
-                closing_balance = abs(closing_balance)
-                
-                net_transactions = closing_balance - opening_balance
-                
-                if net_transactions != 0:
-                    change_indicator = "Changed"
-                elif opening_balance > 0:
-                    change_indicator = "No Change"
-                else:
-                    change_indicator = "New"
-                
-                row_data = {
-                    'particulars': ledger_name,
-                    'opening_balance': opening_balance,
-                    'net_transactions': net_transactions,
-                    'closing_balance': closing_balance,
-                    'change_indicator': change_indicator,
-                    'company_name': company_name,
-                    'start_date': start_date,
-                    'end_date': end_date
-                }
-                
-                all_rows.append(row_data)
-            
-            df = pd.DataFrame(all_rows)
-            
-            if len(df) > 0:
-                df = df.sort_values('particulars').reset_index(drop=True)
-            
-            logger.info(f"Created trial balance DataFrame with {len(df)} rows")
-            if len(df) > 0:
-                logger.info(f"Change indicators: {df['change_indicator'].value_counts().to_dict()}")
-            
-            df.to_excel(output_filename, index=False)
-            logger.info(f"Saved trial balance to {output_filename}")
-            
-            return df
-            
-        except ET.ParseError as e:
-            logger.error(f"XML Parse Error in trial balance: {e}")
-            return pd.DataFrame()
-        except Exception as e:
-            logger.error(f"Error processing trial balance: {e}")
-            return pd.DataFrame()
-
 def extract_all_ledgers_to_xlsx(xml_content, company_name='', output_filename='all_ledgers.xlsx'):
     """
-    Extract all ledger/account details from Tally XML export.
-    Captures comprehensive account information including balances, contact details, tax settings, etc.
+    Extract all ledgers from Tally XML with comprehensive details
     """
-    with ProcessingTimer(f"All ledgers extraction for {company_name}"):
+    with ProcessingTimer("Ledger extraction"):
         try:
             if xml_content is None or (isinstance(xml_content, str) and xml_content.strip() == ""):
                 logger.warning(f"Empty or None XML content for ledgers extraction")
@@ -857,6 +792,95 @@ def extract_all_ledgers_to_xlsx(xml_content, company_name='', output_filename='a
             return pd.DataFrame()
         except Exception as e:
             logger.error(f"Error extracting ledgers: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return pd.DataFrame()
+
+def trial_balance_to_xlsx(xml_content, output_filename='trial_balance.xlsx'):
+    """
+    Extract trial balance data from Tally XML
+    """
+    with ProcessingTimer("Trial Balance extraction"):
+        try:
+            if xml_content is None or (isinstance(xml_content, str) and xml_content.strip() == ""):
+                logger.warning(f"Empty or None XML content for trial balance")
+                return pd.DataFrame()
+            
+            xml_content = sanitize_xml_content(xml_content)
+            
+            if not xml_content or xml_content.strip() == "":
+                logger.warning(f"Empty XML content after sanitization for trial balance")
+                return pd.DataFrame()
+            
+            root = ET.fromstring(xml_content.encode('utf-8'))
+            
+            # Try to find DSP nodes (Trial Balance data structure in Tally)
+            dsp_nodes = root.findall('.//DSP')
+            
+            if len(dsp_nodes) == 0:
+                logger.warning(f"No trial balance data (DSP nodes) found in XML")
+                return pd.DataFrame()
+            
+            logger.info(f"Found {len(dsp_nodes)} trial balance entries")
+            
+            all_rows = []
+            
+            for dsp in dsp_nodes:
+                # Extract ledger/group information
+                ledger_name = clean_text(dsp.findtext('.//DSPDISPNAME', ''))
+                parent_group = clean_text(dsp.findtext('.//DSPPARENT', ''))
+                
+                # Extract amounts - Tally uses specific fields for trial balance
+                opening_balance = clean_text(dsp.findtext('.//DSPOPBAL', '0'))
+                debit_amount = clean_text(dsp.findtext('.//DSPDR', '0'))
+                credit_amount = clean_text(dsp.findtext('.//DSPCR', '0'))
+                closing_balance = clean_text(dsp.findtext('.//DSPCLBAL', '0'))
+                
+                # Additional fields that might be present
+                net_debit = clean_text(dsp.findtext('.//DSPNETDR', '0'))
+                net_credit = clean_text(dsp.findtext('.//DSPNETCR', '0'))
+                
+                row_data = {
+                    'ledger_name': ledger_name,
+                    'parent_group': parent_group,
+                    'opening_balance': opening_balance,
+                    'debit': debit_amount,
+                    'credit': credit_amount,
+                    'closing_balance': closing_balance,
+                    'net_debit': net_debit,
+                    'net_credit': net_credit
+                }
+                
+                all_rows.append(row_data)
+            
+            df = pd.DataFrame(all_rows)
+            
+            # Convert amount columns to numeric
+            amount_cols = ['opening_balance', 'debit', 'credit', 'closing_balance', 'net_debit', 'net_credit']
+            for col in amount_cols:
+                if col in df.columns:
+                    df[col] = df[col].apply(lambda x: convert_to_float(extract_numeric_amount(str(x))))
+            
+            # Sort by ledger name
+            if len(df) > 0:
+                df = df.sort_values('ledger_name').reset_index(drop=True)
+            
+            logger.info(f"Created trial balance DataFrame with {len(df)} rows")
+            if len(df) > 0:
+                logger.info(f"Total Debit: {df['debit'].sum():.2f}")
+                logger.info(f"Total Credit: {df['credit'].sum():.2f}")
+                logger.info(f"Parent groups: {df['parent_group'].value_counts().head(10).to_dict()}")
+            
+            df.to_excel(output_filename, index=False)
+            logger.info(f"Saved trial balance to {output_filename}")
+            
+            return df
+            
+        except ET.ParseError as e:
+            logger.error(f"XML Parse Error in trial balance extraction: {e}")
+            return pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Error extracting trial balance: {e}")
             import traceback
             logger.error(traceback.format_exc())
             return pd.DataFrame()
