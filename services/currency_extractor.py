@@ -10,8 +10,8 @@ CURRENCY_MAP = {
         'names': ['dollar', 'dollars', 'usd']
     },
     'EUR': {
-        'symbols': ['€', 'EUR'],
-        'pattern': r'€|EUR',
+        'symbols': ['€', 'EUR', '?'],
+        'pattern': r'€|EUR|\?',
         'names': ['euro', 'euros', 'eur']
     },
     'GBP': {
@@ -313,13 +313,17 @@ class CurrencyExtractor:
             return 'GBP'
         
         # Enhanced EUR detection
-        if re.search(r'[€Ã¢â€šÂ¬ï¿½]\s*=', text):
+        if re.search(r'[€Ã¢â€šÂ¬ï¿½?]\s*=', text):
             return 'EUR'
         
-        if re.search(r'(^|[\s])[€Ã¢â€šÂ¬ï¿½][\s]*\d', text):
+        if re.search(r'(^|[\s])[€Ã¢â€šÂ¬ï¿½?][\s]*\d', text):
             return 'EUR'
         
         if 'ï¿½' in text and re.search(r'ï¿½\s*=\s*[?\s]*\d', text):
+            return 'EUR'
+        
+        # Special handling for ? symbol with @ pattern (Tally EUR placeholder)
+        if '?' in text and re.search(r'\?\s*@\s*\?', text):
             return 'EUR'
         
         # Enhanced CAD detection
@@ -383,18 +387,38 @@ class CurrencyExtractor:
             'base_amount': None
         }
         
+        
+        # Pattern 2: "AMOUNT SYMBOL @ RATE/SYMBOL = BASE"
+        # Example: "6243.12 £ @ ? 105.18/ £ = ? 656651.36" or "4900.00? @ ? 89.23/? = ? 437227.00"
+        # Check this FIRST because it's more specific
+        pattern2 = r'([-]?\d+\.?\d*)\s*([^\d\s=@]+)\s*@\s*([^\d\s=@]+)\s*([-]?\d+\.?\d*)\s*/\s*[^\d\s=]+\s*=\s*[?]?\s*([-]?\d+\.?\d*)'
+        match2 = re.search(pattern2, text)
+        
+        if match2:
+            result['foreign_amount'] = float(match2.group(1))
+            currency_symbol = match2.group(2).strip()
+            result['exchange_rate'] = float(match2.group(4))
+            result['base_amount'] = float(match2.group(5))
+            result['foreign_currency'] = self.extract_currency(currency_symbol)
+            return result
+        
         # Pattern 1: "AMOUNT SYMBOL = BASE" or "AMOUNT SYMBOL = ? BASE"
-        # Example: "33.93 £ = ? 3568.76/Box"
-        pattern1 = r'([-]?\d+\.?\d*)\s*([^\d\s=@?]+)\s*=\s*[?]?\s*([-]?\d+\.?\d*)'
+        # Example: "33.93 £ = ? 3568.76/Box" or "14.00? = ? 1249.22/Box"
+        # Only check this if Pattern 2 didn't match (no @ symbol)
+        pattern1 = r'([-]?\d+\.?\d*)\s*([^\d\s=@]+)\s*=\s*([^\d\s]+)\s*([-]?\d+\.?\d*)'
         match1 = re.search(pattern1, text)
         
         if match1:
             result['foreign_amount'] = float(match1.group(1))
             currency_symbol = match1.group(2).strip()
-            result['base_amount'] = float(match1.group(3))
+            result['base_amount'] = float(match1.group(4))
             result['foreign_currency'] = self.extract_currency(currency_symbol)
             
-            # Check for exchange rate in the same text
+            # Calculate exchange rate if we have both amounts
+            if result['foreign_amount'] and result['base_amount'] and result['foreign_amount'] != 0:
+                result['exchange_rate'] = result['base_amount'] / result['foreign_amount']
+            
+            # Also check for explicit exchange rate in the same text
             # Pattern: "@ ? RATE/ SYMBOL"
             # Example: "@ ? 105.18/ £"
             rate_pattern = r'@\s*[?]?\s*([-]?\d+\.?\d*)\s*/\s*([^\d\s=]+)'
@@ -402,19 +426,6 @@ class CurrencyExtractor:
             if rate_match:
                 result['exchange_rate'] = float(rate_match.group(1))
             
-            return result
-        
-        # Pattern 2: "AMOUNT SYMBOL @ RATE/SYMBOL = BASE"
-        # Example: "6243.12 £ @ ? 105.18/ £ = ? 656651.36"
-        pattern2 = r'([-]?\d+\.?\d*)\s*([^\d\s=@?]+)\s*@\s*[?]?\s*([-]?\d+\.?\d*)\s*/\s*[^\d\s=]+\s*=\s*[?]?\s*([-]?\d+\.?\d*)'
-        match2 = re.search(pattern2, text)
-        
-        if match2:
-            result['foreign_amount'] = float(match2.group(1))
-            currency_symbol = match2.group(2).strip()
-            result['exchange_rate'] = float(match2.group(3))
-            result['base_amount'] = float(match2.group(4))
-            result['foreign_currency'] = self.extract_currency(currency_symbol)
             return result
         
         # Pattern 3: Just "AMOUNT SYMBOL" (no conversion)
@@ -485,6 +496,7 @@ class CurrencyExtractor:
             '£': '£',
             '\xa3': '£',
             'G£': '£',
+            '?': '€',  # Tally often uses ? as placeholder for €
             '¥': '¥',
             '₹': '₹',
             '₨': '₨',

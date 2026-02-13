@@ -150,6 +150,24 @@ def extract_currency_and_values(rate_text=None, amount_text=None, discount_text=
             detected_currency = amount_currency
             logger.debug(f"Detected currency {amount_currency} from amount_text: {amount_text}")
     
+    # Fallback currency detection: Check for foreign currency patterns
+    # If we see @ and = symbols with ? (placeholder for currency symbol), it's foreign currency
+    if detected_currency == 'INR':
+        foreign_pattern = r'[?€$£¥]\s*@\s*[?€$£¥].*?/\s*[?€$£¥]\s*='
+        if (amount_text and re.search(foreign_pattern, amount_text)) or \
+           (rate_text and re.search(r'[?€$£¥]\s*=\s*[?€$£¥]', rate_text)):
+            # Likely a foreign currency, check for specific symbols
+            if '€' in str(amount_text) or '€' in str(rate_text) or 'EUR' in str(amount_text).upper():
+                detected_currency = 'EUR'
+            elif '$' in str(amount_text) or '$' in str(rate_text) or 'USD' in str(amount_text).upper():
+                detected_currency = 'USD'
+            elif '£' in str(amount_text) or '£' in str(rate_text) or 'GBP' in str(amount_text).upper():
+                detected_currency = 'GBP'
+            elif '?' in str(amount_text) or '?' in str(rate_text):
+                # ? is often a placeholder for € in Tally exports
+                detected_currency = 'EUR'
+            logger.debug(f"Fallback detected currency: {detected_currency} from patterns")
+    
     result['currency'] = detected_currency
     
     # Extract values based on currency
@@ -180,6 +198,18 @@ def extract_currency_and_values(rate_text=None, amount_text=None, discount_text=
             # Exchange rate
             if amount_details['exchange_rate']:
                 result['exchange_rate'] = amount_details['exchange_rate']
+            
+            # Fallback: Try manual extraction if currency_extractor didn't find exchange rate
+            if not result['exchange_rate'] or result['exchange_rate'] == 1.0:
+                # Pattern: amount @ exchange_rate / currency = inr_amount
+                # Example: "4900.00€ @ € 89.23/€ = € 437227.00" or "4900.00? @ ? 89.23/? = ? 437227.00"
+                fallback_pattern = r'([-]?\d+\.?\d*)\s*[€$£¥?]\s*@\s*[€$£¥?]\s*([-]?\d+\.?\d*)\s*/\s*[€$£¥?]'
+                fallback_match = re.search(fallback_pattern, amount_text)
+                if fallback_match:
+                    if not result['amount']:
+                        result['amount'] = convert_to_float(fallback_match.group(1))
+                    result['exchange_rate'] = convert_to_float(fallback_match.group(2))
+                    logger.debug(f"Fallback extraction - Amount: {result['amount']}, Exchange rate: {result['exchange_rate']}")
         
         # Extract from RATE field
         if rate_text:
@@ -188,6 +218,14 @@ def extract_currency_and_values(rate_text=None, amount_text=None, discount_text=
             # Rate in foreign currency
             if rate_details['foreign_amount']:
                 result['rate'] = rate_details['foreign_amount']
+            
+            # Fallback for rate extraction
+            if not result['rate']:
+                # Pattern: "14.00€ = € 1249.22/Box" or "14.00? = ? 1249.22/Box"
+                rate_fallback_pattern = r'([-]?\d+\.?\d*)\s*[€$£¥?]\s*='
+                rate_fallback_match = re.search(rate_fallback_pattern, rate_text)
+                if rate_fallback_match:
+                    result['rate'] = convert_to_float(rate_fallback_match.group(1))
             
             # If no exchange rate from amount, try to get from rate
             if not result['exchange_rate'] or result['exchange_rate'] == 1.0:
@@ -255,6 +293,21 @@ def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name='ledger', outp
                 if not ledger_entries:
                     ledger_entries = voucher.findall('.//LEDGERENTRIES.LIST')
                 
+                # First pass: Extract exchange rate from any ledger entry in this voucher
+                voucher_exchange_rate = 1.0
+                voucher_currency = 'INR'
+                
+                for ledger in ledger_entries:
+                    amount_text = clean_text(ledger.findtext('AMOUNT', '0'))
+                    temp_currency_info = extract_currency_and_values(None, amount_text)
+                    
+                    # If we find a non-INR currency with exchange rate, use it for all entries
+                    if temp_currency_info['currency'] != 'INR' and temp_currency_info['exchange_rate'] > 1.0:
+                        voucher_exchange_rate = temp_currency_info['exchange_rate']
+                        voucher_currency = temp_currency_info['currency']
+                        break
+                
+                # Second pass: Process all ledger entries with the voucher-level exchange rate
                 if ledger_entries:
                     for ledger in ledger_entries:
                         ledger_name = clean_text(ledger.findtext('LEDGERNAME', ''))
@@ -262,6 +315,15 @@ def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name='ledger', outp
                         
                         # Extract currency info
                         currency_info = extract_currency_and_values(None, amount_text)
+                        
+                        # Use voucher-level exchange rate if this entry doesn't have one
+                        if currency_info['exchange_rate'] == 1.0 and voucher_exchange_rate > 1.0:
+                            currency_info['exchange_rate'] = voucher_exchange_rate
+                            currency_info['currency'] = voucher_currency
+                        
+                        # Determine amount_type based on Tally convention:
+                        # Negative amounts = Debit, Positive amounts = Credit
+                        amount_type = 'Debit' if currency_info['amount'] < 0 else 'Credit'
                         
                         row_data = {
                             'guid': guid,
@@ -274,6 +336,7 @@ def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name='ledger', outp
                             'change_status': change_status,
                             'ledger_name': ledger_name,
                             'amount': currency_info['amount'],
+                            'amount_type': amount_type,
                             'currency': currency_info['currency'],
                             'exchange_rate': currency_info['exchange_rate'],
                             'narration': narration
@@ -374,6 +437,41 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                 if not ledger_entries:
                     ledger_entries = voucher.findall('.//LEDGERENTRIES.LIST')
                 
+                # First pass: Extract voucher-level exchange rate
+                voucher_exchange_rate = 1.0
+                voucher_currency = 'INR'
+                
+                # Check ledger entries for exchange rate
+                for ledger in ledger_entries:
+                    amount_text = clean_text(ledger.findtext('AMOUNT', '0'))
+                    temp_currency_info = extract_currency_and_values(None, amount_text)
+                    
+                    if temp_currency_info['currency'] != 'INR' and temp_currency_info['exchange_rate'] > 1.0:
+                        voucher_exchange_rate = temp_currency_info['exchange_rate']
+                        voucher_currency = temp_currency_info['currency']
+                        break
+                
+                # Also check inventory entries for exchange rate
+                if voucher_exchange_rate == 1.0:
+                    inventory_entries_temp = voucher.findall('.//ALLINVENTORYENTRIES.LIST')
+                    if not inventory_entries_temp:
+                        inventory_entries_temp = voucher.findall('.//INVENTORYENTRIES.LIST')
+                    
+                    for inv in inventory_entries_temp:
+                        rate_elem = inv.find('RATE')
+                        amount_elem = inv.find('AMOUNT')
+                        
+                        rate_text = clean_text(rate_elem.text if rate_elem is not None and rate_elem.text else "0")
+                        amount_text = clean_text(amount_elem.text if amount_elem is not None and amount_elem.text else "0")
+                        
+                        temp_currency_info = extract_currency_and_values(rate_text, amount_text, None)
+                        
+                        if temp_currency_info['currency'] != 'INR' and temp_currency_info['exchange_rate'] > 1.0:
+                            voucher_exchange_rate = temp_currency_info['exchange_rate']
+                            voucher_currency = temp_currency_info['currency']
+                            break
+                
+                # Second pass: Process ledger entries for tax amounts
                 for ledger in ledger_entries:
                     ledger_name = clean_text(ledger.findtext('LEDGERNAME', ''))
                     ledger_name_lower = ledger_name.lower()
@@ -416,6 +514,11 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                         
                         # Extract currency and values in ORIGINAL CURRENCY
                         currency_data = extract_currency_and_values(rate_text, amount_text, discount_text)
+                        
+                        # Use voucher-level exchange rate if this entry doesn't have one
+                        if currency_data['exchange_rate'] == 1.0 and voucher_exchange_rate > 1.0:
+                            currency_data['exchange_rate'] = voucher_exchange_rate
+                            currency_data['currency'] = voucher_currency
                         
                         logger.debug(f"Item: {item_name}, Currency: {currency_data['currency']}, Rate: {currency_data['rate']}, Amount: {currency_data['amount']}")
                         

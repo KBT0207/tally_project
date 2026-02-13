@@ -19,8 +19,8 @@ for i in comp:
     
     jv = tally.fetch_all_sales_vouchers(
         company_name=comp_name, 
-        from_date='20250401', 
-        to_date='20250530', 
+        from_date='20240401', 
+        to_date='20240430', 
         debug=True
     )
     
@@ -32,8 +32,6 @@ for i in comp:
     print(f"  → Processing sales vouchers...")
     df = process_inventory_voucher_to_xlsx(
         jv, 
-        voucher_type_name="sales", 
-        output_filename=f'{comp_name}.xlsx'
     )
     
     if len(df) > 0:
