@@ -48,7 +48,7 @@ def clean_text(text):
     return text
 
 def sanitize_xml_content(content):
-    """Sanitize XML content with proper None handling"""
+    """Sanitize XML content with proper None handling and preserve currency symbols"""
     if content is None:
         logger.error("XML content is None")
         return ""
@@ -57,43 +57,31 @@ def sanitize_xml_content(content):
         try:
             content = content.decode('utf-8')
         except UnicodeDecodeError:
-            try:
-                content = content.decode('latin-1')
-            except UnicodeDecodeError:
-                content = content.decode('utf-8', errors='ignore')
+            # Use latin-1 which preserves all bytes (including £ symbol)
+            content = content.decode('latin-1')
     
-    content = str(content)  # Ensure it's a string
-    content = content.replace('G�', 'G£')
-    content = content.replace('\ufffd', '£')
+    content = str(content)
+    
+    # Remove control characters but keep printable unicode
     content = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', content)
+    
+    # Fix XML entities
     content = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;|#\d+;)', '&amp;', content)
     
     return content
 
 def extract_numeric_amount(text):
+    """Extract final numeric amount from text"""
     if not text:
         return "0"
     
     text = str(text)
+    # Look for final amount after '='
     final_amount_match = re.search(r'=\s*[?]?\s*([-]?\d+\.?\d*)', text)
     if final_amount_match:
         return final_amount_match.group(1)
     
-    numeric_match = re.search(r'([-]?\d+\.?\d*)', text)
-    if numeric_match:
-        return numeric_match.group(1)
-    
-    return "0"
-
-def extract_rate_value(text):
-    if not text:
-        return "0"
-    
-    text = str(text)
-    rate_match = re.search(r'=\s*[?]?\s*([-]?\d+\.?\d*)', text)
-    if rate_match:
-        return rate_match.group(1)
-    
+    # Otherwise get first number
     numeric_match = re.search(r'([-]?\d+\.?\d*)', text)
     if numeric_match:
         return numeric_match.group(1)
@@ -128,35 +116,103 @@ def convert_to_float(value):
     except:
         return 0.0
 
-def extract_currency(amount_text, voucher_level_currency=None):
-    currency = currency_extractor.extract_currency(amount_text)
+def extract_currency_and_values(rate_text=None, amount_text=None, discount_text=None):
+    """
+    Extract currency and values in ORIGINAL CURRENCY (not converted to INR).
     
-    if not currency or currency == 'UNKNOWN':
-        currency = voucher_level_currency or 'INR'
+    Returns dict with:
+        - currency: Currency code (e.g., 'INR', 'GBP', 'USD')
+        - rate: Rate in original currency
+        - amount: Amount in original currency
+        - discount: Discount in original currency
+        - exchange_rate: Exchange rate to INR (1.0 for INR)
+    """
+    result = {
+        'currency': 'INR',
+        'rate': 0.0,
+        'amount': 0.0,
+        'discount': 0.0,
+        'exchange_rate': 1.0
+    }
     
-    return currency
-
-def determine_change_status(alter_id, master_id):
-    try:
-        alter = int(alter_id) if alter_id else 0
-        master = int(master_id) if master_id else 0
+    # Detect currency from rate and amount fields
+    detected_currency = 'INR'
+    
+    if rate_text:
+        rate_currency = currency_extractor.extract_currency(rate_text)
+        if rate_currency and rate_currency != 'INR':
+            detected_currency = rate_currency
+            logger.debug(f"Detected currency {rate_currency} from rate_text: {rate_text}")
+    
+    if amount_text:
+        amount_currency = currency_extractor.extract_currency(amount_text)
+        if amount_currency and amount_currency != 'INR':
+            detected_currency = amount_currency
+            logger.debug(f"Detected currency {amount_currency} from amount_text: {amount_text}")
+    
+    result['currency'] = detected_currency
+    
+    # Extract values based on currency
+    if detected_currency == 'INR':
+        # For INR: just extract numeric values
+        result['exchange_rate'] = 1.0
         
-        if alter == 0 or master == 0:
-            return "Unknown"
-        elif alter == 1 and master == 1:
-            return "New"
-        elif alter > 1:
-            return "Modified"
-        else:
-            return "Unchanged"
-    except:
-        return "Unknown"
+        if rate_text:
+            result['rate'] = convert_to_float(extract_numeric_amount(rate_text))
+        
+        if amount_text:
+            result['amount'] = convert_to_float(extract_numeric_amount(amount_text))
+        
+        if discount_text:
+            result['discount'] = convert_to_float(extract_numeric_amount(discount_text))
+    
+    else:
+        # For foreign currency: extract foreign amounts and exchange rate
+        
+        # Extract from AMOUNT field
+        if amount_text:
+            amount_details = currency_extractor.extract_foreign_currency_details(amount_text)
+            
+            # Amount in foreign currency
+            if amount_details['foreign_amount']:
+                result['amount'] = amount_details['foreign_amount']
+            
+            # Exchange rate
+            if amount_details['exchange_rate']:
+                result['exchange_rate'] = amount_details['exchange_rate']
+        
+        # Extract from RATE field
+        if rate_text:
+            rate_details = currency_extractor.extract_foreign_currency_details(rate_text)
+            
+            # Rate in foreign currency
+            if rate_details['foreign_amount']:
+                result['rate'] = rate_details['foreign_amount']
+            
+            # If no exchange rate from amount, try to get from rate
+            if not result['exchange_rate'] or result['exchange_rate'] == 1.0:
+                if rate_details['foreign_amount'] and rate_details['base_amount']:
+                    foreign_val = rate_details['foreign_amount']
+                    inr_val = rate_details['base_amount']
+                    if foreign_val and foreign_val != 0:
+                        result['exchange_rate'] = inr_val / foreign_val
+        
+        # Extract discount in foreign currency
+        if discount_text:
+            discount_details = currency_extractor.extract_foreign_currency_details(discount_text)
+            if discount_details['foreign_amount']:
+                result['discount'] = discount_details['foreign_amount']
+            else:
+                result['discount'] = convert_to_float(extract_numeric_amount(discount_text))
+    
+    return result
 
-# METHOD 1: Process ledger-based vouchers (Journal, Receipt, Payment, Contra)
-def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name,output_filename):
-    with ProcessingTimer(f"{voucher_type_name} voucher processing"):
+def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name='ledger', output_filename='ledger_vouchers.xlsx'):
+    """
+    Process ledger vouchers (Journal, Payment, Receipt, Contra) with enhanced CDC tracking
+    """
+    with ProcessingTimer(f"{voucher_type_name} processing"):
         try:
-            # Validate input
             if xml_content is None or (isinstance(xml_content, str) and xml_content.strip() == ""):
                 logger.warning(f"Empty or None XML content for {voucher_type_name}")
                 return pd.DataFrame()
@@ -168,94 +224,72 @@ def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name,output_filenam
                 return pd.DataFrame()
             
             root = ET.fromstring(xml_content.encode('utf-8'))
-            vouchers = root.findall(".//VOUCHER")
+            
+            vouchers = root.findall('.//VOUCHER')
             logger.info(f"Found {len(vouchers)} {voucher_type_name} vouchers")
             
             if len(vouchers) == 0:
-                logger.warning(f"No vouchers found for {voucher_type_name}")
+                logger.warning(f"No {voucher_type_name} vouchers found in XML")
                 return pd.DataFrame()
             
             all_rows = []
             
             for voucher in vouchers:
-                date_elem = voucher.find('DATE')
-                voucher_no_elem = voucher.find('VOUCHERNUMBER')
-                narration_elem = voucher.find('NARRATION')
-                alter_id_elem = voucher.find('ALTERID')
-                master_id_elem = voucher.find('MASTERID')
-                guid_elem = voucher.find('GUID')
+                # Extract voucher-level metadata
+                guid = voucher.findtext('GUID', '')
+                alter_id = voucher.findtext('ALTERID', '0')
+                master_id = voucher.findtext('MASTERID', '')
+                voucher_number = clean_text(voucher.findtext('VOUCHERNUMBER', ''))
+                voucher_type = clean_text(voucher.findtext('VOUCHERTYPENAME', ''))
+                date = clean_text(voucher.findtext('DATE', ''))
+                reference = clean_text(voucher.findtext('REFERENCE', ''))
+                narration = clean_text(voucher.findtext('NARRATION', ''))
                 
-                date = date_elem.text if date_elem is not None and date_elem.text else ""
-                voucher_no = clean_text(voucher_no_elem.text if voucher_no_elem is not None and voucher_no_elem.text else "")
-                narration = clean_text(narration_elem.text if narration_elem is not None and narration_elem.text else "")
-                alter_id = clean_text(alter_id_elem.text if alter_id_elem is not None and alter_id_elem.text else "0")
-                master_id = clean_text(master_id_elem.text if master_id_elem is not None and master_id_elem.text else "0")
-                guid = clean_text(guid_elem.text if guid_elem is not None and guid_elem.text else "")
+                # Change tracking
+                action = voucher.get('ACTION', 'Unknown')
+                is_deleted = voucher.findtext('ISDELETED', 'No')
+                change_status = 'Deleted' if is_deleted == 'Yes' else action
                 
-                date_formatted = parse_tally_date_formatted(date)
-                change_status = determine_change_status(alter_id, master_id)
-                
-                currency_name_elem = voucher.find('.//CURRENCYNAME')
-                voucher_currency = "INR"
-                if currency_name_elem is not None and currency_name_elem.text:
-                    voucher_currency = currency_name_elem.text.strip()
-                
+                # Process ledger entries
                 ledger_entries = voucher.findall('.//ALLLEDGERENTRIES.LIST')
                 if not ledger_entries:
                     ledger_entries = voucher.findall('.//LEDGERENTRIES.LIST')
                 
-                for ledger in ledger_entries:
-                    ledger_name_elem = ledger.find('LEDGERNAME')
-                    amount_elem = ledger.find('AMOUNT')
-                    rate_elem = ledger.find('RATEOFEXCHANGE')
-                    
-                    ledger_name = clean_text(ledger_name_elem.text if ledger_name_elem is not None and ledger_name_elem.text else "")
-                    amount_text = clean_text(amount_elem.text if amount_elem is not None and amount_elem.text else "0")
-                    rate_text = clean_text(rate_elem.text if rate_elem is not None and rate_elem.text else "1")
-                    
-                    amount = convert_to_float(extract_numeric_amount(amount_text))
-                    rate = convert_to_float(extract_rate_value(rate_text))
-                    
-                    currency = extract_currency(amount_text, voucher_currency)
-                    
-                    if rate == 0.0:
-                        rate = 1.0
-                    
-                    if currency == "INR":
-                        inr_amount = abs(amount)
-                        forex_amount = 0.0
-                    else:
-                        forex_amount = abs(amount) / rate if rate != 0 else abs(amount)
-                        inr_amount = abs(amount)
-                    
-                    amount_type = "Credit" if amount < 0 else "Debit"
-                    
-                    row_data = {
-                        'date': date_formatted,
-                        'voucher_no': voucher_no,
-                        'party_name': ledger_name,
-                        'inr_amount': inr_amount,
-                        'forex_amount': forex_amount,
-                        'rate_of_exchange': rate,
-                        'amount_type': amount_type,
-                        'currency': currency,
-                        'narration': narration,
-                        'alter_id': alter_id,
-                        'master_id': master_id,
-                        'change_status': change_status,
-                        'guid': guid
-                    }
-                    
-                    all_rows.append(row_data)
+                if ledger_entries:
+                    for ledger in ledger_entries:
+                        ledger_name = clean_text(ledger.findtext('LEDGERNAME', ''))
+                        amount_text = clean_text(ledger.findtext('AMOUNT', '0'))
+                        
+                        # Extract currency info
+                        currency_info = extract_currency_and_values(None, amount_text)
+                        
+                        row_data = {
+                            'guid': guid,
+                            'alter_id': alter_id,
+                            'master_id': master_id,
+                            'voucher_type': voucher_type,
+                            'date': parse_tally_date_formatted(date),
+                            'voucher_number': voucher_number,
+                            'reference': reference,
+                            'change_status': change_status,
+                            'ledger_name': ledger_name,
+                            'amount': currency_info['amount'],
+                            'currency': currency_info['currency'],
+                            'exchange_rate': currency_info['exchange_rate'],
+                            'narration': narration
+                        }
+                        
+                        all_rows.append(row_data)
             
             df = pd.DataFrame(all_rows)
             
+            logger.info(f"Created {voucher_type_name} DataFrame with {len(df)} rows")
             if len(df) > 0:
-                column_order = ['date', 'voucher_no', 'party_name', 'inr_amount', 'forex_amount', 
-                              'rate_of_exchange', 'amount_type', 'currency', 
-                              'narration', 'alter_id', 'master_id', 'change_status', 'guid']
-                df = df[column_order]
-                df.to_excel(f"{output_filename}.xlsx")
+                logger.info(f"Currency distribution: {df['currency'].value_counts().to_dict()}")
+                logger.info(f"Change status: {df['change_status'].value_counts().to_dict()}")
+            
+            df.to_excel(output_filename, index=False)
+            
             return df
             
         except ET.ParseError as e:
@@ -263,17 +297,16 @@ def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name,output_filenam
             return pd.DataFrame()
         except Exception as e:
             logger.error(f"Error parsing {voucher_type_name} voucher: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return pd.DataFrame()
 
-# METHOD 2: Process inventory vouchers (Sales, Sales Return, Purchase, Purchase Return)
-def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name, output_filename):
+def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory', output_filename='inventory_vouchers.xlsx'):
     """
-    Process vouchers with inventory items (Sales, Sales Return, Purchase, Purchase Return)
-    Returns DataFrame with item-wise details and tax breakup
+    Process inventory vouchers with rate, amount, discount in ORIGINAL CURRENCY
     """
-    with ProcessingTimer(f"{voucher_type_name} voucher processing"):
+    with ProcessingTimer(f"{voucher_type_name} processing"):
         try:
-            # Validate input
             if xml_content is None or (isinstance(xml_content, str) and xml_content.strip() == ""):
                 logger.warning(f"Empty or None XML content for {voucher_type_name}")
                 return pd.DataFrame()
@@ -285,63 +318,47 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name, output_fil
                 return pd.DataFrame()
             
             root = ET.fromstring(xml_content.encode('utf-8'))
-            vouchers = root.findall(".//VOUCHER")
+            
+            vouchers = root.findall('.//VOUCHER')
             logger.info(f"Found {len(vouchers)} {voucher_type_name} vouchers")
             
             if len(vouchers) == 0:
-                logger.warning(f"No vouchers found for {voucher_type_name}")
+                logger.warning(f"No {voucher_type_name} vouchers found in XML")
                 return pd.DataFrame()
             
             all_rows = []
             
             for voucher in vouchers:
-                voucher_key = clean_text(voucher.get('VCHKEY', ''))
-                voucher_type = clean_text(voucher.get('VCHTYPE', ''))
-                
-                date = voucher.findtext('DATE', '').strip()
-                voucher_no = clean_text(voucher.findtext('VOUCHERNUMBER', ''))
-                reference_no = clean_text(voucher.findtext('REFERENCE', ''))
+                # Extract voucher-level metadata
+                guid = voucher.findtext('GUID', '')
+                alter_id = voucher.findtext('ALTERID', '0')
+                master_id = voucher.findtext('MASTERID', '')
+                voucher_number = clean_text(voucher.findtext('VOUCHERNUMBER', ''))
+                voucher_type = clean_text(voucher.findtext('VOUCHERTYPENAME', ''))
+                date = clean_text(voucher.findtext('DATE', ''))
                 party_name = clean_text(voucher.findtext('PARTYNAME', ''))
-                place_of_supply = clean_text(voucher.findtext('.//PLACEOFSUPPLY', ''))
+                reference = clean_text(voucher.findtext('REFERENCE', ''))
                 narration = clean_text(voucher.findtext('NARRATION', ''))
-                entered_by = clean_text(voucher.findtext('ENTEREDBY', ''))
-                guid = clean_text(voucher.findtext('GUID', ''))
                 
-                basic_buyer_name = clean_text(voucher.findtext('.//BASICBUYERNAME', ''))
-                basic_ship_doc_no = clean_text(voucher.findtext('.//BASICSHIPPINGDOCUMENTNO', ''))
-                party_gstin = clean_text(voucher.findtext('.//PARTYGSTIN', ''))
-                alter_id = clean_text(voucher.findtext('ALTERID', '0'))
-                master_id = clean_text(voucher.findtext('MASTERID', '0'))
-                
-                change_status = determine_change_status(alter_id, master_id)
-                
-                currency_name_elem = voucher.find('.//CURRENCYNAME')
-                voucher_currency = "INR"
-                if currency_name_elem is not None and currency_name_elem.text:
-                    voucher_currency = currency_name_elem.text.strip()
+                # Change tracking
+                action = voucher.get('ACTION', 'Unknown')
+                is_deleted = voucher.findtext('ISDELETED', 'No')
+                change_status = 'Deleted' if is_deleted == 'Yes' else action
                 
                 base_voucher_data = {
-                    'voucher_key': voucher_key,
-                    'voucher_type': voucher_type,
-                    'date': parse_tally_date(date),
-                    'voucher_number': voucher_no,
-                    'reference': reference_no,
-                    'party_name': party_name or basic_buyer_name,
-                    'party_gstin': party_gstin,
-                    'place_of_supply': place_of_supply,
-                    'narration': narration,
-                    'entered_by': entered_by,
                     'guid': guid,
-                    'basic_ship_doc_no': basic_ship_doc_no,
                     'alter_id': alter_id,
                     'master_id': master_id,
-                    'change_status': change_status,
+                    'voucher_type': voucher_type,
+                    'date': parse_tally_date_formatted(date),
+                    'voucher_number': voucher_number,
+                    'reference': reference,
+                    'party_name': party_name,
+                    'narration': narration,
+                    'change_status': change_status
                 }
                 
-                ledger_entries = voucher.findall('.//ALLLEDGERENTRIES.LIST')
-                if not ledger_entries:
-                    ledger_entries = voucher.findall('.//LEDGERENTRIES.LIST')
-                
+                # Initialize tax data
                 tax_data = {
                     'cgst_amt': 0.0,
                     'sgst_amt': 0.0,
@@ -352,22 +369,18 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name, output_fil
                     'other_amt': 0.0
                 }
                 
+                # Extract tax amounts from ledger entries
+                ledger_entries = voucher.findall('.//ALLLEDGERENTRIES.LIST')
+                if not ledger_entries:
+                    ledger_entries = voucher.findall('.//LEDGERENTRIES.LIST')
+                
                 for ledger in ledger_entries:
-                    ledger_name = clean_text(ledger.find('LEDGERNAME').text if ledger.find('LEDGERNAME') is not None else "")
-                    amount_elem = ledger.find('AMOUNT')
-                    amount_text = clean_text(amount_elem.text if amount_elem is not None and amount_elem.text else "0")
-                    
-                    if voucher_currency == "INR":
-                        currency = extract_currency(amount_text)
-                        if currency and currency != 'UNKNOWN' and currency != 'INR':
-                            voucher_currency = currency
-                    
-                    try:
-                        amount = float(extract_numeric_amount(amount_text))
-                    except:
-                        amount = 0.0
-                    
+                    ledger_name = clean_text(ledger.findtext('LEDGERNAME', ''))
                     ledger_name_lower = ledger_name.lower()
+                    
+                    amount_text = clean_text(ledger.findtext('AMOUNT', '0'))
+                    amount = convert_to_float(extract_numeric_amount(amount_text))
+                    
                     if re.search(r'cgst\s*output', ledger_name_lower):
                         tax_data['cgst_amt'] += abs(amount)
                     elif re.search(r'sgst\s*output', ledger_name_lower):
@@ -383,51 +396,55 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name, output_fil
                     elif amount > 0 and ledger_name.strip() != "" and not re.search(r'sales|party|customer', ledger_name_lower):
                         tax_data['other_amt'] += abs(amount)
                 
+                # Process inventory entries
                 inventory_entries = voucher.findall('.//ALLINVENTORYENTRIES.LIST')
                 if not inventory_entries:
                     inventory_entries = voucher.findall('.//INVENTORYENTRIES.LIST')
                 
                 if inventory_entries:
                     for inv in inventory_entries:
-                        item_name = clean_text(inv.find('STOCKITEMNAME').text if inv.find('STOCKITEMNAME') is not None else "")
+                        item_name = clean_text(inv.findtext('STOCKITEMNAME', ''))
                         qty_elem = inv.find('ACTUALQTY')
                         rate_elem = inv.find('RATE')
                         amount_elem = inv.find('AMOUNT')
                         discount_elem = inv.find('DISCOUNT')
                         
                         qty = clean_text(qty_elem.text if qty_elem is not None and qty_elem.text else "0")
-                        rate = clean_text(rate_elem.text if rate_elem is not None and rate_elem.text else "0")
+                        rate_text = clean_text(rate_elem.text if rate_elem is not None and rate_elem.text else "0")
                         amount_text = clean_text(amount_elem.text if amount_elem is not None and amount_elem.text else "0")
-                        discount = clean_text(discount_elem.text if discount_elem is not None and discount_elem.text else "0")
+                        discount_text = clean_text(discount_elem.text if discount_elem is not None and discount_elem.text else "0")
                         
-                        item_currency = extract_currency(amount_text, voucher_currency)
+                        # Extract currency and values in ORIGINAL CURRENCY
+                        currency_data = extract_currency_and_values(rate_text, amount_text, discount_text)
                         
-                        qty_numeric = extract_numeric_amount(qty)
-                        rate_numeric = extract_rate_value(rate)
-                        amount_numeric = extract_numeric_amount(amount_text)
-                        discount_numeric = extract_numeric_amount(discount)
+                        logger.debug(f"Item: {item_name}, Currency: {currency_data['currency']}, Rate: {currency_data['rate']}, Amount: {currency_data['amount']}")
+                        
+                        qty_numeric = convert_to_float(extract_numeric_amount(qty))
                         
                         row_data = {
                             **base_voucher_data,
                             'item_name': item_name,
                             'quantity': qty_numeric,
-                            'rate': rate_numeric,
-                            'amount': amount_numeric,
-                            'discount': discount_numeric,
-                            'currency': item_currency,
+                            'rate': currency_data['rate'],
+                            'amount': currency_data['amount'],
+                            'discount': currency_data['discount'],
+                            'currency': currency_data['currency'],
+                            'exchange_rate': currency_data['exchange_rate'],
                             **tax_data
                         }
                         
                         all_rows.append(row_data)
                 else:
+                    # Voucher without inventory items
                     row_data = {
                         **base_voucher_data,
                         'item_name': '',
-                        'quantity': '0',
-                        'rate': '0',
-                        'amount': '0',
-                        'discount': '0',
-                        'currency': voucher_currency,
+                        'quantity': 0.0,
+                        'rate': 0.0,
+                        'amount': 0.0,
+                        'discount': 0.0,
+                        'currency': 'INR',
+                        'exchange_rate': 1.0,
                         **tax_data
                     }
                     all_rows.append(row_data)
@@ -438,6 +455,7 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name, output_fil
             if len(df) > 0:
                 logger.info(f"Currency distribution: {df['currency'].value_counts().to_dict()}")
                 logger.info(f"Change status: {df['change_status'].value_counts().to_dict()}")
+            
             df.to_excel(output_filename, index=False)
             
             return df
@@ -447,6 +465,8 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name, output_fil
             return pd.DataFrame()
         except Exception as e:
             logger.error(f"Error parsing {voucher_type_name} voucher: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return pd.DataFrame()
 
 def trial_balance_to_xlsx(xml_content, company_name, start_date, end_date, output_filename='trial_balance.xlsx'):
@@ -456,7 +476,6 @@ def trial_balance_to_xlsx(xml_content, company_name, start_date, end_date, outpu
     """
     with ProcessingTimer(f"Trial balance processing for {company_name}"):
         try:
-            # Validate input
             if xml_content is None or (isinstance(xml_content, str) and xml_content.strip() == ""):
                 logger.warning(f"Empty or None XML content for trial balance")
                 return pd.DataFrame()

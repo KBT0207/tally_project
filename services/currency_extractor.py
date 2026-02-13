@@ -12,8 +12,8 @@ CURRENCY_MAP = {
         'names': ['euro', 'euros', 'eur']
     },
     'GBP': {
-        'symbols': ['£', 'G£', '\xa3', 'GBP', 'G�'],
-        'pattern': r'£|G£|GBP|\xa3',
+        'symbols': ['£', 'G£', '\xa3', 'GBP', 'Gï¿½', '\ufffd', '�'],
+        'pattern': r'£|G£|GBP|\xa3|\ufffd',
         'names': ['pound', 'pounds', 'sterling', 'gbp']
     },
     'JPY': {
@@ -271,32 +271,175 @@ class CurrencyExtractor:
         self.default_currency = default_currency
         
     def extract_currency(self, text, default=None):
+        """Extract currency code from text"""
         if not text or str(text).strip() == "" or str(text).strip() == "0":
             return default or self.default_currency
             
         text = str(text)
         
-        if re.search(r'G[\s�\ufffd\xa3£]', text):
+        # Enhanced GBP detection - catches various corrupted encodings including Unicode replacement char
+        if re.search(r'G[\sï¿½\ufffd\xa3£Â£Ã‚Â£Ã¯Â¿Â½�]', text):
             return 'GBP'
         
-        if '\xa3' in text or '£' in text:
+        if '\xa3' in text or '£' in text or 'Â£' in text or 'Ã‚Â£' in text or 'Gï¿½' in text or '\ufffd' in text or '�' in text:
             return 'GBP'
+        
+        # Enhanced EUR detection
+        if re.search(r'[€Ã¢â€šÂ¬ï¿½]\s*=', text):
+            return 'EUR'
+        
+        if re.search(r'(^|[\s])[€Ã¢â€šÂ¬ï¿½][\s]*\d', text):
+            return 'EUR'
+        
+        if 'ï¿½' in text and re.search(r'ï¿½\s*=\s*[?\s]*\d', text):
+            return 'EUR'
+        
+        # Enhanced CAD detection
+        if re.search(r'CA\$|CAD', text, re.IGNORECASE):
+            return 'CAD'
+        
+        if re.search(r'C\$', text):
+            return 'CAD'
             
+        # Enhanced AUD detection
+        if re.search(r'AU\$|AUD', text, re.IGNORECASE):
+            return 'AUD'
+        
+        if re.search(r'A\$', text):
+            return 'AUD'
+        
+        # Standard pattern matching for all currencies
         for currency_code, currency_info in self.currency_map.items():
             pattern = currency_info['pattern']
             if re.search(pattern, text, re.IGNORECASE):
                 return currency_code
         
+        # Name-based matching
         text_lower = text.lower()
         for currency_code, currency_info in self.currency_map.items():
             for name in currency_info['names']:
                 if name in text_lower:
                     return currency_code
         
+        # If text contains numbers but no currency detected, use default
         if re.search(r'\d', text):
-            return 'UNKNOWN'
+            return default or self.default_currency
             
         return default or self.default_currency
+    
+    def extract_foreign_currency_details(self, text):
+        """
+        Extract foreign currency details from Tally formatted text.
+        
+        Examples:
+            "33.93 £ = ? 3568.76/Box" -> {'foreign_amount': 33.93, 'foreign_currency': 'GBP', 'base_amount': 3568.76}
+            "6243.12 £ @ ? 105.18/ £ = ? 656651.36" -> {'foreign_amount': 6243.12, 'foreign_currency': 'GBP', 'exchange_rate': 105.18, 'base_amount': 656651.36}
+            "1000 USD" -> {'foreign_amount': 1000, 'foreign_currency': 'USD', 'base_amount': None}
+        
+        Returns:
+            dict with keys: foreign_amount, foreign_currency, exchange_rate (optional), base_amount (optional)
+        """
+        if not text or str(text).strip() == "" or str(text).strip() == "0":
+            return {
+                'foreign_amount': None,
+                'foreign_currency': self.default_currency,
+                'exchange_rate': None,
+                'base_amount': None
+            }
+        
+        text = str(text)
+        result = {
+            'foreign_amount': None,
+            'foreign_currency': self.default_currency,
+            'exchange_rate': None,
+            'base_amount': None
+        }
+        
+        # Pattern 1: "AMOUNT SYMBOL = BASE" or "AMOUNT SYMBOL = ? BASE"
+        # Example: "33.93 £ = ? 3568.76/Box"
+        pattern1 = r'([-]?\d+\.?\d*)\s*([^\d\s=@?]+)\s*=\s*[?]?\s*([-]?\d+\.?\d*)'
+        match1 = re.search(pattern1, text)
+        
+        if match1:
+            result['foreign_amount'] = float(match1.group(1))
+            currency_symbol = match1.group(2).strip()
+            result['base_amount'] = float(match1.group(3))
+            result['foreign_currency'] = self.extract_currency(currency_symbol)
+            
+            # Check for exchange rate in the same text
+            # Pattern: "@ ? RATE/ SYMBOL"
+            # Example: "@ ? 105.18/ £"
+            rate_pattern = r'@\s*[?]?\s*([-]?\d+\.?\d*)\s*/\s*([^\d\s=]+)'
+            rate_match = re.search(rate_pattern, text)
+            if rate_match:
+                result['exchange_rate'] = float(rate_match.group(1))
+            
+            return result
+        
+        # Pattern 2: "AMOUNT SYMBOL @ RATE/SYMBOL = BASE"
+        # Example: "6243.12 £ @ ? 105.18/ £ = ? 656651.36"
+        pattern2 = r'([-]?\d+\.?\d*)\s*([^\d\s=@?]+)\s*@\s*[?]?\s*([-]?\d+\.?\d*)\s*/\s*[^\d\s=]+\s*=\s*[?]?\s*([-]?\d+\.?\d*)'
+        match2 = re.search(pattern2, text)
+        
+        if match2:
+            result['foreign_amount'] = float(match2.group(1))
+            currency_symbol = match2.group(2).strip()
+            result['exchange_rate'] = float(match2.group(3))
+            result['base_amount'] = float(match2.group(4))
+            result['foreign_currency'] = self.extract_currency(currency_symbol)
+            return result
+        
+        # Pattern 3: Just "AMOUNT SYMBOL" (no conversion)
+        # Example: "1000 USD" or "£ 1000"
+        pattern3 = r'([^\d\s]+)\s*([-]?\d+\.?\d*)|^([-]?\d+\.?\d*)\s*([^\d\s]+)'
+        match3 = re.search(pattern3, text)
+        
+        if match3:
+            if match3.group(1):  # Symbol before amount
+                currency_symbol = match3.group(1).strip()
+                result['foreign_amount'] = float(match3.group(2))
+            else:  # Amount before symbol
+                result['foreign_amount'] = float(match3.group(3))
+                currency_symbol = match3.group(4).strip()
+            
+            result['foreign_currency'] = self.extract_currency(currency_symbol)
+            return result
+        
+        # Fallback: Try to extract just the first number
+        number_match = re.search(r'([-]?\d+\.?\d*)', text)
+        if number_match:
+            result['foreign_amount'] = float(number_match.group(1))
+            result['foreign_currency'] = self.extract_currency(text)
+        
+        return result
+    
+    def extract_rate_and_currency(self, rate_text):
+        """
+        Extract rate, currency, and base rate from rate field.
+        
+        Example: "33.93 £ = ? 3568.76/Box"
+        Returns: (33.93, 'GBP', 3568.76)
+        """
+        details = self.extract_foreign_currency_details(rate_text)
+        return (
+            details['foreign_amount'],
+            details['foreign_currency'],
+            details['base_amount']
+        )
+    
+    def extract_amount_and_currency(self, amount_text):
+        """
+        Extract amount, currency, and exchange details from amount field.
+        
+        Example: "6243.12 £ @ ? 105.18/ £ = ? 656651.36"
+        Returns: {
+            'foreign_amount': 6243.12,
+            'foreign_currency': 'GBP',
+            'exchange_rate': 105.18,
+            'base_amount': 656651.36
+        }
+        """
+        return self.extract_foreign_currency_details(amount_text)
     
     def extract_currency_symbol(self, text):
         if not text:
@@ -304,7 +447,8 @@ class CurrencyExtractor:
             
         text = str(text)
         
-        if re.search(r'G[\s�\ufffd\xa3£]', text):
+        # Check for corrupted GBP symbols including Unicode replacement character
+        if re.search(r'G[\sï¿½\ufffd\xa3£�]', text) or '\ufffd' in text or '�' in text:
             return '£'
         
         symbols = {
@@ -348,7 +492,8 @@ class CurrencyExtractor:
         text = str(text)
         found_currencies = []
         
-        if re.search(r'G[\s�\ufffd\xa3£]', text):
+        # Check for corrupted GBP symbols including Unicode replacement character
+        if re.search(r'G[\sï¿½\ufffd\xa3£�]', text) or '\ufffd' in text or '�' in text:
             found_currencies.append('GBP')
         
         for currency_code, currency_info in self.currency_map.items():
@@ -361,11 +506,22 @@ class CurrencyExtractor:
         return found_currencies
 
 
+# Convenience functions for backward compatibility
 def extract_currency(text, default='INR'):
     extractor = CurrencyExtractor(default_currency=default)
     return extractor.extract_currency(text)
 
 
 def extract_currency_symbol(text):
-    return extract_currency(text, default='INR')
+    extractor = CurrencyExtractor(default_currency='INR')
+    return extractor.extract_currency_symbol(text)
 
+
+def extract_foreign_currency_details(text, default='INR'):
+    """
+    New function to extract complete foreign currency information.
+    
+    Returns dict with: foreign_amount, foreign_currency, exchange_rate, base_amount
+    """
+    extractor = CurrencyExtractor(default_currency=default)
+    return extractor.extract_foreign_currency_details(text)

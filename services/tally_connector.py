@@ -16,11 +16,27 @@ class TallyConnector:
     
     @staticmethod
     def sanitize_xml(xml_content):
-        if isinstance(xml_content, bytes):
-            xml_content = xml_content.decode('utf-8', errors='ignore')
+        """
+        Sanitize XML content while preserving currency symbols.
         
+        CRITICAL FIX: Use latin-1 encoding instead of utf-8 with errors='ignore'
+        to preserve currency symbols like £ (byte \xa3), € (byte \xa4), etc.
+        
+        The errors='ignore' was silently removing currency symbols from the XML!
+        """
+        if isinstance(xml_content, bytes):
+            # Try UTF-8 first (most common)
+            try:
+                xml_content = xml_content.decode('utf-8')
+            except UnicodeDecodeError:
+                # Fallback to latin-1 which preserves ALL bytes including currency symbols
+                # This is CRITICAL for preserving £, €, $ symbols from Tally
+                xml_content = xml_content.decode('latin-1')
+        
+        # Remove only control characters that break XML parsing
+        # DO NOT remove printable unicode characters (currency symbols)
         xml_content = re.sub(r'&#([0-8]|1[1-2]|1[4-9]|2[0-9]|3[0-1]);', '', xml_content)
-        xml_content = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', '', xml_content)
+        xml_content = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', xml_content)
         
         return xml_content.encode('utf-8')
     
