@@ -17,27 +17,98 @@ class TallyConnector:
     @staticmethod
     def sanitize_xml(xml_content):
         """
-        Sanitize XML content while preserving currency symbols.
+        Sanitize XML content while PRESERVING ALL CURRENCY SYMBOLS AND UNICODE CHARACTERS.
         
-        CRITICAL FIX: Use latin-1 encoding instead of utf-8 with errors='ignore'
-        to preserve currency symbols like £ (byte \xa3), € (byte \xa4), etc.
+        This method is designed to handle ALL global currencies safely:
+        - ASCII currencies: $ (USD)
+        - Latin-1 currencies: £ (GBP), € (EUR in some encodings)
+        - Windows-1252: € (EUR), £ (GBP)
+        - UTF-8 Unicode: ₹ ₨ ¥ ₩ ₱ ₽ ₺ ₪ ₦ ₵ ₴ ₸ ₫ ฿ 元 ৳ (all Asian/Middle Eastern/African currencies)
         
-        The errors='ignore' was silently removing currency symbols from the XML!
+        STRATEGY:
+        1. Try UTF-8 first (handles all Unicode currencies correctly)
+        2. If UTF-8 fails, try Windows-1252 (common for Tally on Windows, handles € £ well)
+        3. If both fail, use Latin-1 (NEVER fails, preserves ALL bytes)
+        4. Only remove XML-breaking control characters (0x00-0x1F, 0x7F)
+        5. NEVER remove printable characters (all currency symbols are printable)
+        
+        SAFE for: USD, EUR, GBP, JPY, CNY, INR, CHF, CAD, AUD, NZD, KRW, SGD, HKD,
+                  NOK, SEK, DKK, PLN, THB, MYR, IDR, PHP, MXN, BRL, ARS, CLP, COP,
+                  ZAR, RUB, TRY, AED, SAR, QAR, KWD, ILS, EGP, PKR, BDT, LKR, NPR,
+                  VND, KZT, UAH, NGN, KES, GHS, MAD, TWD, CZK, HUF, RON, BGN, HRK,
+                  and ALL other currencies!
         """
         if isinstance(xml_content, bytes):
-            # Try UTF-8 first (most common)
+            # STEP 1: Try UTF-8 first (best for modern Unicode currencies)
             try:
                 xml_content = xml_content.decode('utf-8')
+                logger.debug("✓ Decoded XML as UTF-8 (best for Unicode currencies)")
+                
             except UnicodeDecodeError:
-                # Fallback to latin-1 which preserves ALL bytes including currency symbols
-                # This is CRITICAL for preserving £, €, $ symbols from Tally
-                xml_content = xml_content.decode('latin-1')
+                logger.debug("UTF-8 failed, trying Windows-1252...")
+                
+                # STEP 2: Try Windows-1252 (common for Tally on Windows)
+                # This handles € (0x80), £ (0xA3) and other Western European symbols
+                try:
+                    xml_content = xml_content.decode('windows-1252')
+                    logger.debug("✓ Decoded XML as Windows-1252 (good for €, £)")
+                    
+                except UnicodeDecodeError:
+                    logger.debug("Windows-1252 failed, using Latin-1 fallback...")
+                    
+                    # STEP 3: Latin-1 fallback (NEVER fails - accepts all bytes)
+                    # This preserves ALL bytes but may misinterpret some symbols
+                    xml_content = xml_content.decode('latin-1')
+                    logger.debug("✓ Decoded XML as Latin-1 (fallback - preserves all bytes)")
         
-        # Remove only control characters that break XML parsing
-        # DO NOT remove printable unicode characters (currency symbols)
+        # Ensure it's a string
+        xml_content = str(xml_content)
+        
+        # Log detected currency symbols (for debugging)
+        detected_symbols = []
+        currency_checks = {
+            '$': 'USD/AUD/CAD/etc',
+            '£': 'GBP',
+            '€': 'EUR',
+            '¥': 'JPY/CNY',
+            '₹': 'INR',
+            '₨': 'INR/PKR',
+            '₩': 'KRW',
+            '₱': 'PHP',
+            '₽': 'RUB',
+            '₺': 'TRY',
+            '₪': 'ILS',
+            '₦': 'NGN',
+            '฿': 'THB',
+            '₫': 'VND',
+            '?': 'Corrupted symbol'
+        }
+        
+        for symbol, currency in currency_checks.items():
+            if symbol in xml_content:
+                detected_symbols.append(f"{symbol}({currency})")
+        
+        if detected_symbols:
+            logger.debug(f"Currency symbols found: {', '.join(detected_symbols)}")
+        
+        # CRITICAL: Only remove control characters that BREAK XML PARSING
+        # These are non-printable control codes that cause XML parse errors
+        # DO NOT REMOVE printable characters (includes ALL currency symbols)
+        
+        # Remove XML entity references for control characters (&#0; to &#31;)
         xml_content = re.sub(r'&#([0-8]|1[1-2]|1[4-9]|2[0-9]|3[0-1]);', '', xml_content)
+        
+        # Remove raw control characters (0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F, 0x7F)
+        # These cause "not well-formed (invalid token)" XML errors
+        # Note: We keep 0x09 (tab), 0x0A (newline), 0x0D (carriage return)
         xml_content = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', xml_content)
         
+        # Fix unescaped ampersands (but preserve existing XML entities)
+        # This prevents "not well-formed" errors from unescaped &
+        xml_content = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)', '&amp;', xml_content)
+        
+        # Encode back to UTF-8 for XML parsing
+        # UTF-8 is the universal XML encoding that handles all Unicode
         return xml_content.encode('utf-8')
     
     def __init__(self, host='localhost', port=9000, timeout=(60, 1800), max_retries=3):
@@ -135,6 +206,7 @@ class TallyConnector:
             f.write(content)
         
         logger.info(f'Saved debug file: {filename}')
+        return filename
     
     def _fetch_data(
         self,
@@ -184,11 +256,22 @@ class TallyConnector:
                 return None
             
             if debug:
-                self._save_debug_file(
+                # Save RAW response BEFORE any processing
+                raw_file = self._save_debug_file(
                     response.content,
+                    f'debug_{data_type.lower().replace(" ", "_")}_response_raw',
+                    company_name
+                )
+                logger.info(f'Saved RAW XML (before sanitization): {raw_file}')
+                
+                # Save sanitized response AFTER processing
+                sanitized_content = self.sanitize_xml(response.content)
+                sanitized_file = self._save_debug_file(
+                    sanitized_content,
                     f'debug_{data_type.lower().replace(" ", "_")}_response',
                     company_name
                 )
+                logger.info(f'Saved SANITIZED XML (after processing): {sanitized_file}')
             
             total_time = (datetime.now() - start_time).total_seconds()
             logger.info(f'Successfully fetched {data_type} XML for {company_name} in {total_time:.1f}s')
@@ -216,22 +299,20 @@ class TallyConnector:
                 all_companies = []
 
                 for company in root.findall(".//COMPANY"):
-                    company_data = self._extract_company_data(company)
-                    
-                    if company_data["name"] and company_data["name"].strip():
-                        all_companies.append(company_data)
-                
-                logger.info(f'Found {len(all_companies)} companies with detailed information')
+                    company_info = self._extract_company_details(company)
+                    all_companies.append(company_info)
+
+                logger.info(f"Found {len(all_companies)} companies with detailed information")
                 return all_companies
-                
-            return []
-            
+            else:
+                logger.error(f"Failed to fetch companies. Status code: {response.status_code}")
+                return []
+
         except Exception as e:
-            logger.error(f'Error fetching company list: {e}', exc_info=True)
+            logger.error(f"Error in fetch_all_companies: {e}", exc_info=True)
             return []
-    
-    @staticmethod
-    def _extract_company_data(company: ET.Element) -> Dict[str, Any]:
+
+    def _extract_company_details(self, company) -> Dict[str, Any]:
         return {
             "name": company.findtext("NAME", default=""),
             "formal_name": company.findtext("BASICCOMPANYFORMALNAME", default=""),

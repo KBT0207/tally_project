@@ -1,4 +1,7 @@
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 CURRENCY_MAP = {
     'USD': {
@@ -271,11 +274,36 @@ class CurrencyExtractor:
         self.default_currency = default_currency
         
     def extract_currency(self, text, default=None):
-        """Extract currency code from text"""
+        """
+        Extract currency code from text.
+        Handles corrupted currency symbols and ? placeholder pattern.
+        """
         if not text or str(text).strip() == "" or str(text).strip() == "0":
             return default or self.default_currency
             
         text = str(text)
+        
+        # CRITICAL: Check for "? = ?" pattern (Tally's corrupted currency symbol)
+        # Example: "9.60? = ? 864.00/Box" or "9.60 ? @ ? 105.18/ ? = ? 656651.36"
+        if re.search(r'\d+\.?\d*\s*\?\s*[=@]', text):
+            # This is foreign currency with corrupted symbol
+            # Try to determine which currency based on exchange rate
+            exchange_rate_match = re.search(r'@\s*\?\s*(\d+\.?\d*)', text)
+            if exchange_rate_match:
+                rate = float(exchange_rate_match.group(1))
+                # GBP to INR: ~95-115, EUR to INR: ~85-95, USD to INR: ~75-85
+                if 95 <= rate <= 115:
+                    logger.debug(f"Detected GBP from ? pattern (rate={rate})")
+                    return 'GBP'
+                elif 85 <= rate <= 95:
+                    logger.debug(f"Detected EUR from ? pattern (rate={rate})")
+                    return 'EUR'
+                elif 75 <= rate <= 85:
+                    logger.debug(f"Detected USD from ? pattern (rate={rate})")
+                    return 'USD'
+            # Default to EUR for ? pattern without clear rate
+            logger.debug("Detected foreign currency from ? pattern, defaulting to EUR")
+            return 'EUR'
         
         # Enhanced GBP detection - catches various corrupted encodings including Unicode replacement char
         if re.search(r'G[\sï¿½\ufffd\xa3£Â£Ã‚Â£Ã¯Â¿Â½�]', text):
