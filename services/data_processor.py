@@ -657,3 +657,206 @@ def trial_balance_to_xlsx(xml_content, company_name, start_date, end_date, outpu
         except Exception as e:
             logger.error(f"Error processing trial balance: {e}")
             return pd.DataFrame()
+
+def extract_all_ledgers_to_xlsx(xml_content, company_name='', output_filename='all_ledgers.xlsx'):
+    """
+    Extract all ledger/account details from Tally XML export.
+    Captures comprehensive account information including balances, contact details, tax settings, etc.
+    """
+    with ProcessingTimer(f"All ledgers extraction for {company_name}"):
+        try:
+            if xml_content is None or (isinstance(xml_content, str) and xml_content.strip() == ""):
+                logger.warning(f"Empty or None XML content for ledgers extraction")
+                return pd.DataFrame()
+            
+            xml_content = sanitize_xml_content(xml_content)
+            
+            if not xml_content or xml_content.strip() == "":
+                logger.warning(f"Empty XML content after sanitization for ledgers extraction")
+                return pd.DataFrame()
+            
+            root = ET.fromstring(xml_content.encode('utf-8'))
+            
+            ledgers = root.findall('.//LEDGER')
+            logger.info(f"Found {len(ledgers)} ledgers")
+            
+            if len(ledgers) == 0:
+                logger.warning(f"No ledgers found in XML")
+                return pd.DataFrame()
+            
+            all_rows = []
+            
+            for ledger in ledgers:
+                # Basic Information
+                ledger_name = ledger.get('NAME', '')
+                guid = clean_text(ledger.findtext('GUID', ''))
+                parent = clean_text(ledger.findtext('PARENT', ''))
+                
+                # Identification
+                alter_id = clean_text(ledger.findtext('ALTERID', '0'))
+                
+                # Dates
+                created_date = clean_text(ledger.findtext('CREATEDDATE', ''))
+                altered_on = clean_text(ledger.findtext('ALTEREDON', ''))
+                
+                # Contact Information
+                email = clean_text(ledger.findtext('EMAIL', ''))
+                website = clean_text(ledger.findtext('WEBSITE', ''))
+                phone = clean_text(ledger.findtext('LEDGERPHONE', ''))
+                mobile = clean_text(ledger.findtext('LEDGERMOBILE', ''))
+                fax = clean_text(ledger.findtext('LEDGERFAX', ''))
+                contact_person = clean_text(ledger.findtext('LEDGERCONTACT', ''))
+                
+                # Address Information
+                pincode = clean_text(ledger.findtext('PINCODE', ''))
+                state_name = clean_text(ledger.findtext('STATENAME', ''))
+                country_name = clean_text(ledger.findtext('COUNTRYNAME', ''))
+                
+                # Financial Information
+                opening_balance = clean_text(ledger.findtext('OPENINGBALANCE', '0'))
+                currency_name = clean_text(ledger.findtext('CURRENCYNAME', ''))
+                
+                # Tax Information
+                pan_number = clean_text(ledger.findtext('INCOMETAXNUMBER', ''))
+                gstin = clean_text(ledger.findtext('PARTYGSTIN', ''))
+                gst_registration_type = clean_text(ledger.findtext('GSTREGISTRATIONTYPE', ''))
+                vat_tin_number = clean_text(ledger.findtext('VATTINNUMBER', ''))
+                sales_tax_number = clean_text(ledger.findtext('SALESTAXNUMBER', ''))
+                
+                # Tax Applicability Flags
+                is_gst_applicable = clean_text(ledger.findtext('ISGSTAPPLICABLE', 'No'))
+                is_tds_applicable = clean_text(ledger.findtext('ISTDSAPPLICABLE', 'No'))
+                is_tcs_applicable = clean_text(ledger.findtext('ISTCSAPPLICABLE', 'No'))
+                
+                # Banking Information
+                bank_account_holder = clean_text(ledger.findtext('BANKACCHOLDERNAME', ''))
+                ifsc_code = clean_text(ledger.findtext('IFSCODE', ''))
+                bank_branch = clean_text(ledger.findtext('BRANCHNAME', ''))
+                swift_code = clean_text(ledger.findtext('SWIFTCODE', ''))
+                bank_iban = clean_text(ledger.findtext('BANKIBAN', ''))
+                
+                # Business Information
+                export_import_code = clean_text(ledger.findtext('EXPORTIMPORTCODE', ''))
+                msme_reg_number = clean_text(ledger.findtext('MSMEREGNUMBER', ''))
+                
+                # Account Settings
+                is_bill_wise_on = clean_text(ledger.findtext('ISBILLWISEON', 'No'))
+                is_cost_centres_on = clean_text(ledger.findtext('ISCOSTCENTRESON', 'No'))
+                is_interest_on = clean_text(ledger.findtext('ISINTERESTON', 'No'))
+                
+                # Credit Management
+                credit_limit = clean_text(ledger.findtext('CREDITLIMIT', '0'))
+                bill_credit_period = clean_text(ledger.findtext('BILLCREDITPERIOD', ''))
+                
+                # Status Flags
+                is_deleted = clean_text(ledger.findtext('ISDELETED', 'No'))
+                
+                # Narration
+                narration = clean_text(ledger.findtext('NARRATION', ''))
+                description = clean_text(ledger.findtext('DESCRIPTION', ''))
+                
+                # Mailing Details
+                mailing_name_native = clean_text(ledger.findtext('MAILINGNAMENATIVE', ''))
+                
+                # Additional Tax Details
+                tds_deductee_type = clean_text(ledger.findtext('TDSDEDUCTEETYPE', ''))
+                tax_type = clean_text(ledger.findtext('TAXTYPE', ''))
+                
+                # Party Details
+                relation_type = clean_text(ledger.findtext('RELATIONTYPE', ''))
+                
+                row_data = {
+                    # Basic Info
+                    'ledger_name': ledger_name,
+                    'guid': guid,
+                    'alter_id': alter_id,
+                    'parent_group': parent,
+                    'company_name': company_name,
+                    
+                    # Dates
+                    'created_date': created_date,
+                    'altered_on': altered_on,
+                    
+                    # Contact Info
+                    'email': email,
+                    'website': website,
+                    'phone': phone,
+                    'mobile': mobile,
+                    'fax': fax,
+                    'contact_person': contact_person,
+                    
+                    # Address
+                    'pincode': pincode,
+                    'state': state_name,
+                    'country': country_name,
+                    
+                    # Financial
+                    'opening_balance': opening_balance,
+                    'currency': currency_name,
+                    'credit_limit': credit_limit,
+                    'bill_credit_period': bill_credit_period,
+                    
+                    # Tax Information
+                    'pan': pan_number,
+                    'gstin': gstin,
+                    'gst_registration_type': gst_registration_type,
+                    'vat_tin': vat_tin_number,
+                    'sales_tax_number': sales_tax_number,
+                    'is_gst_applicable': is_gst_applicable,
+                    'is_tds_applicable': is_tds_applicable,
+                    'is_tcs_applicable': is_tcs_applicable,
+                    'tds_deductee_type': tds_deductee_type,
+                    'tax_type': tax_type,
+                    
+                    # Banking
+                    'bank_account_holder': bank_account_holder,
+                    'ifsc_code': ifsc_code,
+                    'bank_branch': bank_branch,
+                    'swift_code': swift_code,
+                    'bank_iban': bank_iban,
+                    
+                    # Business
+                    'export_import_code': export_import_code,
+                    'msme_reg_number': msme_reg_number,
+                    
+                    # Settings
+                    'is_bill_wise_on': is_bill_wise_on,
+                    'is_cost_centres_on': is_cost_centres_on,
+                    'is_interest_on': is_interest_on,
+                    
+                    # Status
+                    'is_deleted': is_deleted,
+                    
+                    # Additional
+                    'narration': narration,
+                    'description': description,
+                    'mailing_name_native': mailing_name_native,
+                    'relation_type': relation_type
+                }
+                
+                all_rows.append(row_data)
+            
+            df = pd.DataFrame(all_rows)
+            
+            # Sort by ledger name
+            if len(df) > 0:
+                df = df.sort_values('ledger_name').reset_index(drop=True)
+            
+            logger.info(f"Created ledgers DataFrame with {len(df)} rows")
+            if len(df) > 0:
+                logger.info(f"Parent groups: {df['parent_group'].value_counts().head(10).to_dict()}")
+                logger.info(f"Deleted ledgers: {df['is_deleted'].value_counts().to_dict()}")
+            
+            df.to_excel(output_filename, index=False)
+            logger.info(f"Saved all ledgers to {output_filename}")
+            
+            return df
+            
+        except ET.ParseError as e:
+            logger.error(f"XML Parse Error in ledgers extraction: {e}")
+            return pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Error extracting ledgers: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return pd.DataFrame()
