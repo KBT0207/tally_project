@@ -116,6 +116,32 @@ def convert_to_float(value):
     except:
         return 0.0
 
+def extract_unit_from_rate(rate_text):
+    """Extract unit from rate field (e.g., '390.00/Ltr' -> 'Ltr')"""
+    if not rate_text:
+        return ""
+    
+    rate_text = str(rate_text)
+    # Look for pattern: number/unit
+    match = re.search(r'/\s*(\w+)\s*$', rate_text)
+    if match:
+        return match.group(1)
+    return ""
+
+def parse_quantity_with_unit(qty_text):
+    """Parse quantity with unit (e.g., ' 100.000 Ltr' -> (100.0, 'Ltr'))"""
+    if not qty_text:
+        return (0.0, "")
+    
+    qty_text = str(qty_text).strip()
+    # Pattern: number followed by optional unit
+    match = re.match(r'([-]?\d+\.?\d*)\s*(\w*)', qty_text)
+    if match:
+        qty = convert_to_float(match.group(1))
+        unit = match.group(2) if match.group(2) else ""
+        return (qty, unit)
+    return (0.0, "")
+
 def extract_currency_and_values(rate_text=None, amount_text=None, discount_text=None):
     """
     Extract currency and values in ORIGINAL CURRENCY (not converted to INR).
@@ -403,6 +429,11 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                 reference = clean_text(voucher.findtext('REFERENCE', ''))
                 narration = clean_text(voucher.findtext('NARRATION', ''))
                 
+                # Extract voucher-level GST and e-invoice fields
+                party_gstin = clean_text(voucher.findtext('PARTYGSTIN', ''))
+                irn_number = clean_text(voucher.findtext('IRN', ''))
+                eway_bill = clean_text(voucher.findtext('TEMPGSTEWAYBILLNUMBER', ''))
+                
                 # Change tracking
                 action = voucher.get('ACTION', 'Unknown')
                 is_deleted = voucher.findtext('ISDELETED', 'No')
@@ -418,14 +449,14 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                     'reference': reference,
                     'party_name': party_name,
                     'narration': narration,
-                    'change_status': change_status
+                    'change_status': change_status,
+                    'gst_number': party_gstin,
+                    'e_invoice_number': irn_number,
+                    'eway_bill': eway_bill
                 }
                 
-                # Initialize tax data
-                tax_data = {
-                    'cgst_amt': 0.0,
-                    'sgst_amt': 0.0,
-                    'igst_amt': 0.0,
+                # Initialize voucher-level charges (not item-specific)
+                voucher_charges = {
                     'freight_amt': 0.0,
                     'dca_amt': 0.0,
                     'cf_amt': 0.0,
@@ -471,7 +502,16 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                             voucher_currency = temp_currency_info['currency']
                             break
                 
-                # Second pass: Process ledger entries for tax amounts
+                # Process ledger entries for GST and non-GST charges
+                voucher_gst_data = {
+                    'cgst_total': 0.0,
+                    'sgst_total': 0.0,
+                    'igst_total': 0.0,
+                    'cgst_rate': 0.0,
+                    'sgst_rate': 0.0,
+                    'igst_rate': 0.0
+                }
+                
                 for ledger in ledger_entries:
                     ledger_name = clean_text(ledger.findtext('LEDGERNAME', ''))
                     ledger_name_lower = ledger_name.lower()
@@ -479,39 +519,49 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                     amount_text = clean_text(ledger.findtext('AMOUNT', '0'))
                     amount = convert_to_float(extract_numeric_amount(amount_text))
                     
-                    # Match CGST followed by "Input" or "Output" (with any @, %, spaces, numbers)
-                    # Examples: "CGST Input @9%", "CGST Output @18%", "CGST Input @ 2.5 %", "cgst output @28%"
+                    # Extract GST from ledger entries
                     if re.search(r'cgst\s*(?:input|output)', ledger_name_lower):
-                        tax_data['cgst_amt'] += abs(amount)
-                    # Match SGST followed by "Input" or "Output" (with any @, %, spaces, numbers)
-                    # Examples: "SGST Input @9%", "SGST Output @18%", "SGST Input @2.5%", "sgst output"
+                        voucher_gst_data['cgst_total'] += abs(amount)
+                        # Extract rate from ledger name (e.g., "CGST Output @9%")
+                        rate_match = re.search(r'@\s*(\d+\.?\d*)\s*%', ledger_name)
+                        if rate_match and voucher_gst_data['cgst_rate'] == 0.0:
+                            voucher_gst_data['cgst_rate'] = convert_to_float(rate_match.group(1))
                     elif re.search(r'sgst\s*(?:input|output)', ledger_name_lower):
-                        tax_data['sgst_amt'] += abs(amount)
-                    # Match IGST followed by "Input" or "Output" (with any @, %, spaces, numbers)
-                    # Examples: "IGST Input @18%", "IGST Output @28%", "IGST Input @ 6 %", "igst output"
+                        voucher_gst_data['sgst_total'] += abs(amount)
+                        # Extract rate from ledger name
+                        rate_match = re.search(r'@\s*(\d+\.?\d*)\s*%', ledger_name)
+                        if rate_match and voucher_gst_data['sgst_rate'] == 0.0:
+                            voucher_gst_data['sgst_rate'] = convert_to_float(rate_match.group(1))
                     elif re.search(r'igst\s*(?:input|output)', ledger_name_lower):
-                        tax_data['igst_amt'] += abs(amount)
+                        voucher_gst_data['igst_total'] += abs(amount)
+                        # Extract rate from ledger name
+                        rate_match = re.search(r'@\s*(\d+\.?\d*)\s*%', ledger_name)
+                        if rate_match and voucher_gst_data['igst_rate'] == 0.0:
+                            voucher_gst_data['igst_rate'] = convert_to_float(rate_match.group(1))
                     # Match Freight
                     elif re.search(r'freight', ledger_name_lower):
-                        tax_data['freight_amt'] += abs(amount)
+                        voucher_charges['freight_amt'] += abs(amount)
                     # Match DCA (Document Charges, Duty Charges, etc.)
                     elif re.search(r'dca', ledger_name_lower):
-                        tax_data['dca_amt'] += abs(amount)
+                        voucher_charges['dca_amt'] += abs(amount)
                     # Match Clearing & Forwarding (with or without &, spaces)
                     elif re.search(r'clearing\s*&?\s*forwarding', ledger_name_lower):
-                        tax_data['cf_amt'] += abs(amount)
+                        voucher_charges['cf_amt'] += abs(amount)
                     # Other charges - exclude party ledger and system ledgers
-                    # Include all other ledgers regardless of amount sign (expense ledgers can be positive or negative in XML)
                     elif (ledger_name.strip() != "" and 
                           ledger_name != party_name and  # Exclude the party ledger
                           abs(amount) > 0.01 and  # Exclude zero or near-zero amounts
                           not re.search(r'round', ledger_name_lower)):  # Exclude Round Off
-                        tax_data['other_amt'] += abs(amount)
+                        voucher_charges['other_amt'] += abs(amount)
                 
                 # Process inventory entries
                 inventory_entries = voucher.findall('.//ALLINVENTORYENTRIES.LIST')
                 if not inventory_entries:
                     inventory_entries = voucher.findall('.//INVENTORYENTRIES.LIST')
+                
+                # Calculate total item amount for proportional GST distribution
+                total_item_amount = 0.0
+                temp_item_data = []
                 
                 if inventory_entries:
                     for inv in inventory_entries:
@@ -520,11 +570,53 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                         rate_elem = inv.find('RATE')
                         amount_elem = inv.find('AMOUNT')
                         discount_elem = inv.find('DISCOUNT')
+                        billed_qty_elem = inv.find('BILLEDQTY')
                         
                         qty = clean_text(qty_elem.text if qty_elem is not None and qty_elem.text else "0")
                         rate_text = clean_text(rate_elem.text if rate_elem is not None and rate_elem.text else "0")
                         amount_text = clean_text(amount_elem.text if amount_elem is not None and amount_elem.text else "0")
                         discount_text = clean_text(discount_elem.text if discount_elem is not None and discount_elem.text else "0")
+                        billed_qty_text = clean_text(billed_qty_elem.text if billed_qty_elem is not None and billed_qty_elem.text else "0")
+                        
+                        # Extract unit from rate
+                        unit = extract_unit_from_rate(rate_text)
+                        
+                        # Extract alt_qty and alt_unit from billed quantity
+                        alt_qty, alt_unit = parse_quantity_with_unit(billed_qty_text)
+                        
+                        # Extract batch information
+                        batch_allocations = inv.findall('.//BATCHALLOCATIONS.LIST')
+                        batch_no = ""
+                        mfg_date = ""
+                        exp_date = ""
+                        
+                        if batch_allocations:
+                            # Take the first batch allocation
+                            batch = batch_allocations[0]
+                            batch_no = clean_text(batch.findtext('BATCHNAME', ''))
+                            mfg_date_raw = clean_text(batch.findtext('MFDON', ''))
+                            mfg_date = parse_tally_date_formatted(mfg_date_raw) if mfg_date_raw else ""
+                            
+                            # Extract expiry date - can be in different formats
+                            exp_period_elem = batch.find('EXPIRYPERIOD')
+                            if exp_period_elem is not None:
+                                exp_date_text = exp_period_elem.text
+                                if exp_date_text:
+                                    # Try to extract date from format like "1-Jan-28"
+                                    exp_date = clean_text(exp_date_text)
+                                # Also check for JD attribute which has numeric format
+                                exp_jd = exp_period_elem.get('JD', '')
+                                if exp_jd and not exp_date:
+                                    exp_date = parse_tally_date_formatted(exp_jd) if exp_jd else ""
+                        
+                        # Extract HSN code from accounting allocations (item-specific)
+                        hsn_code = ""
+                        accounting_allocations = inv.findall('.//ACCOUNTINGALLOCATIONS.LIST')
+                        if accounting_allocations:
+                            for acc_alloc in accounting_allocations:
+                                if not hsn_code:
+                                    hsn_code = clean_text(acc_alloc.findtext('GSTHSNSACCODE', ''))
+                                    break
                         
                         # Extract currency and values in ORIGINAL CURRENCY
                         currency_data = extract_currency_and_values(rate_text, amount_text, discount_text)
@@ -538,16 +630,52 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                         
                         qty_numeric = convert_to_float(extract_numeric_amount(qty))
                         
-                        row_data = {
-                            **base_voucher_data,
+                        # Store temp item data
+                        temp_item_data.append({
                             'item_name': item_name,
                             'quantity': qty_numeric,
+                            'unit': unit,
+                            'alt_qty': alt_qty,
+                            'alt_unit': alt_unit,
+                            'batch_no': batch_no,
+                            'mfg_date': mfg_date,
+                            'exp_date': exp_date,
+                            'hsn_code': hsn_code,
                             'rate': currency_data['rate'],
                             'amount': currency_data['amount'],
                             'discount': currency_data['discount'],
                             'currency': currency_data['currency'],
-                            'exchange_rate': currency_data['exchange_rate'],
-                            **tax_data
+                            'exchange_rate': currency_data['exchange_rate']
+                        })
+                        
+                        total_item_amount += abs(currency_data['amount'])
+                    
+                    # Now distribute GST proportionally to each item
+                    for item_data in temp_item_data:
+                        item_amount = abs(item_data['amount'])
+                        
+                        # Calculate proportional GST for this item
+                        if total_item_amount > 0:
+                            proportion = item_amount / total_item_amount
+                            cgst_amt = voucher_gst_data['cgst_total'] * proportion
+                            sgst_amt = voucher_gst_data['sgst_total'] * proportion
+                            igst_amt = voucher_gst_data['igst_total'] * proportion
+                        else:
+                            cgst_amt = 0.0
+                            sgst_amt = 0.0
+                            igst_amt = 0.0
+                        
+                        # Calculate total GST rate
+                        gst_rate = voucher_gst_data['cgst_rate'] + voucher_gst_data['sgst_rate'] + voucher_gst_data['igst_rate']
+                        
+                        row_data = {
+                            **base_voucher_data,
+                            **item_data,
+                            'gst%': gst_rate,
+                            'cgst_amt': cgst_amt,
+                            'sgst_amt': sgst_amt,
+                            'igst_amt': igst_amt,
+                            **voucher_charges
                         }
                         
                         all_rows.append(row_data)
@@ -557,24 +685,69 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                         **base_voucher_data,
                         'item_name': '',
                         'quantity': 0.0,
+                        'unit': '',
+                        'alt_qty': 0.0,
+                        'alt_unit': '',
+                        'batch_no': '',
+                        'mfg_date': '',
+                        'exp_date': '',
+                        'hsn_code': '',
+                        'gst%': 0.0,
                         'rate': 0.0,
                         'amount': 0.0,
                         'discount': 0.0,
+                        'cgst_amt': 0.0,
+                        'sgst_amt': 0.0,
+                        'igst_amt': 0.0,
                         'currency': 'INR',
                         'exchange_rate': 1.0,
-                        **tax_data
+                        **voucher_charges
                     }
                     all_rows.append(row_data)
             
             df = pd.DataFrame(all_rows)
             
             logger.info(f"Created {voucher_type_name} DataFrame with {len(df)} rows")
+            
+            # Calculate total_amt: sum of amount + all tax/charge columns for entire voucher
+            # Show total only on first row of each voucher, 0 for subsequent rows
+            if len(df) > 0:
+                # First, calculate per-row totals
+                df['row_total'] = (
+                    df['amount'].fillna(0) + 
+                    df['cgst_amt'].fillna(0) + 
+                    df['sgst_amt'].fillna(0) + 
+                    df['igst_amt'].fillna(0) + 
+                    df['freight_amt'].fillna(0) + 
+                    df['dca_amt'].fillna(0) + 
+                    df['cf_amt'].fillna(0) + 
+                    df['other_amt'].fillna(0)
+                )
+                
+                # Group by voucher_number and calculate total for entire voucher
+                voucher_totals = df.groupby('voucher_number')['row_total'].sum().to_dict()
+                
+                # Mark first occurrence of each voucher
+                df['is_first_row'] = ~df.duplicated(subset=['voucher_number'], keep='first')
+                
+                # Set total_amt: show voucher total only for first row, 0 for others
+                df['total_amt'] = df.apply(
+                    lambda row: voucher_totals[row['voucher_number']] if row['is_first_row'] else 0.0, 
+                    axis=1
+                )
+                
+                # Drop temporary columns
+                df = df.drop(columns=['row_total', 'is_first_row'])
+            
             columns = ["date", "voucher_number", "reference", "voucher_type", 
-                    "party_name", "item_name", "quantity", "rate",
-                    "amount", "discount", "cgst_amt", "sgst_amt", "igst_amt", 
-                    "freight_amt", "dca_amt", "cf_amt", "other_amt", "currency", 
-                    "exchange_rate", "narration", "guid", "alter_id", "master_id", 
-                    "change_status"]
+                    "party_name", "item_name", "quantity", "unit", "alt_qty", "alt_unit",
+                    "batch_no", "mfg_date", "exp_date", "hsn_code", "gst%",
+                    "rate", "amount", "discount", 
+                    "cgst_amt", "sgst_amt", "igst_amt", 
+                    "freight_amt", "dca_amt", "cf_amt", "other_amt", "total_amt", 
+                    "currency", "exchange_rate", 
+                    "gst_number", "e_invoice_number", "eway_bill",
+                    "narration", "guid", "alter_id", "master_id", "change_status"]
 
             if len(df) > 0:
                 df = df[columns]
