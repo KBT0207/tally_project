@@ -23,5 +23,5 @@ for idx, company in enumerate(companies, 1):
     if not comp_name or comp_name.upper() in ['N/A', 'NA', 'NONE', '']:
         continue
     
-    data = tally.fetch_trial_balance(company_name=comp_name,from_date=FROM_DATE, to_date=TO_DATE, debug=True)
-    d = trial_balance_to_xlsx(data,comp_name=comp_name,start_date=FROM_DATE, end_date=TO_DATE)
+    data = tally.fetch_all_sales_return(company_name=comp_name,from_date=FROM_DATE, to_date=TO_DATE, debug=True)
+    d = process_inventory_voucher_to_xlsx(data)
