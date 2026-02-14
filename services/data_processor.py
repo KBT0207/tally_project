@@ -796,91 +796,53 @@ def extract_all_ledgers_to_xlsx(xml_content, company_name='', output_filename='a
             logger.error(traceback.format_exc())
             return pd.DataFrame()
 
-def trial_balance_to_xlsx(xml_content, output_filename='trial_balance.xlsx'):
-    """
-    Extract trial balance data from Tally XML
-    """
-    with ProcessingTimer("Trial Balance extraction"):
-        try:
-            if xml_content is None or (isinstance(xml_content, str) and xml_content.strip() == ""):
-                logger.warning(f"Empty or None XML content for trial balance")
-                return pd.DataFrame()
-            
-            xml_content = sanitize_xml_content(xml_content)
-            
-            if not xml_content or xml_content.strip() == "":
-                logger.warning(f"Empty XML content after sanitization for trial balance")
-                return pd.DataFrame()
-            
-            root = ET.fromstring(xml_content.encode('utf-8'))
-            
-            # Try to find DSP nodes (Trial Balance data structure in Tally)
-            dsp_nodes = root.findall('.//DSP')
-            
-            if len(dsp_nodes) == 0:
-                logger.warning(f"No trial balance data (DSP nodes) found in XML")
-                return pd.DataFrame()
-            
-            logger.info(f"Found {len(dsp_nodes)} trial balance entries")
-            
-            all_rows = []
-            
-            for dsp in dsp_nodes:
-                # Extract ledger/group information
-                ledger_name = clean_text(dsp.findtext('.//DSPDISPNAME', ''))
-                parent_group = clean_text(dsp.findtext('.//DSPPARENT', ''))
-                
-                # Extract amounts - Tally uses specific fields for trial balance
-                opening_balance = clean_text(dsp.findtext('.//DSPOPBAL', '0'))
-                debit_amount = clean_text(dsp.findtext('.//DSPDR', '0'))
-                credit_amount = clean_text(dsp.findtext('.//DSPCR', '0'))
-                closing_balance = clean_text(dsp.findtext('.//DSPCLBAL', '0'))
-                
-                # Additional fields that might be present
-                net_debit = clean_text(dsp.findtext('.//DSPNETDR', '0'))
-                net_credit = clean_text(dsp.findtext('.//DSPNETCR', '0'))
-                
-                row_data = {
-                    'ledger_name': ledger_name,
-                    'parent_group': parent_group,
-                    'opening_balance': opening_balance,
-                    'debit': debit_amount,
-                    'credit': credit_amount,
-                    'closing_balance': closing_balance,
-                    'net_debit': net_debit,
-                    'net_credit': net_credit
-                }
-                
-                all_rows.append(row_data)
-            
-            df = pd.DataFrame(all_rows)
-            
-            # Convert amount columns to numeric
-            amount_cols = ['opening_balance', 'debit', 'credit', 'closing_balance', 'net_debit', 'net_credit']
-            for col in amount_cols:
-                if col in df.columns:
-                    df[col] = df[col].apply(lambda x: convert_to_float(extract_numeric_amount(str(x))))
-            
-            # Sort by ledger name
-            if len(df) > 0:
-                df = df.sort_values('ledger_name').reset_index(drop=True)
-            
-            logger.info(f"Created trial balance DataFrame with {len(df)} rows")
-            if len(df) > 0:
-                logger.info(f"Total Debit: {df['debit'].sum():.2f}")
-                logger.info(f"Total Credit: {df['credit'].sum():.2f}")
-                logger.info(f"Parent groups: {df['parent_group'].value_counts().head(10).to_dict()}")
-            
-            df.to_excel(output_filename, index=False)
-            logger.info(f"Saved trial balance to {output_filename}")
-            
-            return df
-            
-        except ET.ParseError as e:
-            logger.error(f"XML Parse Error in trial balance extraction: {e}")
+def trial_balance_to_xlsx(xml_content, comp_name: str, start_date: str, end_date: str, output_filename='trial_balance.xlsx'):
+    try:
+        if not xml_content or not str(xml_content).strip():
             return pd.DataFrame()
-        except Exception as e:
-            logger.error(f"Error extracting trial balance: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return pd.DataFrame()
+
+        xml_content = sanitize_xml_content(xml_content)
+        root = ET.fromstring(xml_content.encode('utf-8'))
+
+        ledger_nodes = root.findall('.//LEDGER')
+        rows = []
+
+        for ledger in ledger_nodes:
+            ledger_name = ledger.get('NAME', '')
+            if not ledger_name:
+                ledger_name = ledger.findtext('LEDGERNAME', '')
+            ledger_name = clean_text(ledger_name)
+
+            if not ledger_name:
+                continue
+
+            parent_group = clean_text(ledger.findtext('PARENT', ''))
+
+            opening_text = clean_text(ledger.findtext('OPENINGBALANCE', '0'))
+            closing_text = clean_text(ledger.findtext('CLOSINGBALANCE', '0'))
+
+            opening_val = convert_to_float(extract_numeric_amount(str(opening_text)))
+            closing_val = convert_to_float(extract_numeric_amount(str(closing_text)))
+            net_transactions = closing_val - opening_val
+
+            rows.append({
+                'ledger_name': ledger_name,
+                'parent_group': parent_group,
+                'opening_balance': opening_val,
+                'net_transactions': net_transactions,
+                'closing_balance': closing_val,
+                'start_date': start_date,
+                'end_date': end_date,
+                'company_name': comp_name,
+            })
+
+        df = pd.DataFrame(rows)
+
+        if not df.empty:
+            df = df.sort_values('ledger_name').reset_index(drop=True)
+
+        df.to_excel(output_filename, index=False)
+        return df
+
+    except Exception:
+        return pd.DataFrame()

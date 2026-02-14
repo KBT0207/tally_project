@@ -9,16 +9,15 @@
         <DESC>
             <STATICVARIABLES>
                 <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-                <SVFROMDATE type="Date">20240401</SVFROMDATE>
-                <SVTODATE type="Date">20240930</SVTODATE>
+                <SVCURRENTCOMPANY></SVCURRENTCOMPANY>
+                <SVFROMDATE TYPE="Date"></SVFROMDATE>
+                <SVTODATE TYPE="Date"></SVTODATE>
             </STATICVARIABLES>
             <TDL>
                 <TDLMESSAGE>
-                    <COLLECTION NAME="Trial Balance">
+                    <COLLECTION NAME="TrialBalance">
                         <TYPE>Ledger</TYPE>
-                        <FETCH>Name, OpeningBalance, ClosingBalance</FETCH>
-                        <COMPUTE>PeriodDebit: ##LedgerDebitPeriod</COMPUTE>
-                        <COMPUTE>PeriodCredit: ##LedgerCreditPeriod</COMPUTE>
+                        <FETCH>Name, Parent, OpeningBalance, ClosingBalance</FETCH>
                     </COLLECTION>
                 </TDLMESSAGE>
             </TDL>

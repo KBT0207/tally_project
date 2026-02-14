@@ -18,7 +18,7 @@ from datetime import datetime
 
 # Configuration
 FROM_DATE = '20250401'  # April 1, 2024
-TO_DATE = '20250130'    # February 28, 2025
+TO_DATE = '20250730'    # February 28, 2025
 OUTPUT_DIR = 'tally_exports'  # Output directory
 
 # Create output directory if it doesn't exist
@@ -47,5 +47,5 @@ for idx, company in enumerate(companies, 1):
         print(f"\n[{idx}/{len(companies)}] Skipping company with empty/invalid name")
         continue
     
-    data = tally.fetch_all_sales_vouchers(company_name=comp_name,from_date=FROM_DATE, to_date=TO_DATE, debug=True)
-    d = process_inventory_voucher_to_xlsx(data)
+    data = tally.fetch_trial_balance(company_name=comp_name,from_date=FROM_DATE, to_date=TO_DATE, debug=True)
+    d = trial_balance_to_xlsx(data, comp_name=comp_name, start_date=FROM_DATE, end_date=TO_DATE)
