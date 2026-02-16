@@ -561,9 +561,9 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                         
                         row_data = {
                             **base_voucher_data,
-                            'item_name': '',
+                            'item_name': 'No Item',
                             'quantity': 0.0,
-                            'unit': '',
+                            'unit': 'No Unit',
                             'alt_qty': 0.0,
                             'alt_unit': '',
                             'batch_no': '',
@@ -609,9 +609,9 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                     
                     row_data = {
                         **base_voucher_data,
-                        'item_name': '',
+                        'item_name': 'No Item',
                         'quantity': 0.0,
-                        'unit': '',
+                        'unit': 'No Unit',
                         'alt_qty': 0.0,
                         'alt_unit': '',
                         'batch_no': '',
