@@ -440,7 +440,7 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                 
                 # Extract voucher-level GST and e-invoice fields
                 party_gstin = clean_text(voucher.findtext('PARTYGSTIN', ''))
-                irn_number = clean_text(voucher.findtext('IRNA', ''))
+                irn_number = clean_text(voucher.findtext('IRNACKNO', ''))
                 eway_bill = clean_text(voucher.findtext('TEMPGSTEWAYBILLNUMBER', ''))
                 
                 # Change tracking
@@ -645,6 +645,12 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                         
                         qty_numeric = convert_to_float(extract_numeric_amount(qty))
                         
+                        # For sales return vouchers, remove minus sign from amount
+                        item_amount = currency_data['amount']
+                        voucher_type_lower = voucher_type.lower()
+                        if 'sales return' in voucher_type_lower or 'credit note' in voucher_type_lower:
+                            item_amount = abs(item_amount)
+                        
                         # Store temp item data
                         temp_item_data.append({
                             'item_name': item_name,
@@ -657,13 +663,13 @@ def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory'
                             'exp_date': exp_date,
                             'hsn_code': hsn_code,
                             'rate': currency_data['rate'],
-                            'amount': currency_data['amount'],
+                            'amount': item_amount,
                             'discount': currency_data['discount'],
                             'currency': currency_data['currency'],
                             'exchange_rate': currency_data['exchange_rate']
                         })
                         
-                        total_item_amount += abs(currency_data['amount'])
+                        total_item_amount += abs(item_amount)
                     
                     # Now distribute GST proportionally to each item
                     # Special case: if total_item_amount is 0 (empty items), treat as non-inventory voucher

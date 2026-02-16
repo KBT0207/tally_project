@@ -264,14 +264,14 @@ class TallyConnector:
                 )
                 logger.info(f'Saved RAW XML (before sanitization): {raw_file}')
                 
-                # Save sanitized response AFTER processing
-                sanitized_content = self.sanitize_xml(response.content)
-                sanitized_file = self._save_debug_file(
-                    sanitized_content,
-                    f'debug_{data_type.lower().replace(" ", "_")}_response',
-                    company_name
-                )
-                logger.info(f'Saved SANITIZED XML (after processing): {sanitized_file}')
+                # # Save sanitized response AFTER processing
+                # sanitized_content = self.sanitize_xml(response.content)
+                # sanitized_file = self._save_debug_file(
+                #     sanitized_content,
+                #     f'debug_{data_type.lower().replace(" ", "_")}_response',
+                #     company_name
+                # )
+                # logger.info(f'Saved SANITIZED XML (after processing): {sanitized_file}')
             
             total_time = (datetime.now() - start_time).total_seconds()
             logger.info(f'Successfully fetched {data_type} XML for {company_name} in {total_time:.1f}s')
