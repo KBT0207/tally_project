@@ -878,7 +878,13 @@ def trial_balance_to_xlsx(xml_content, comp_name: str, start_date: str, end_date
             })
 
         df = pd.DataFrame(rows)
-
+        date_col = ['start_date','end_date']
+        for col in date_col:
+            df[col] = pd.to_datetime(
+                df[col],
+                format="%Y%m%d",
+                errors="coerce"
+            ).dt.date
         if not df.empty:
             df = df.sort_values('ledger_name').reset_index(drop=True)
 

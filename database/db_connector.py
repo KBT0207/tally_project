@@ -7,18 +7,8 @@ from typing import Optional, Dict, Any
 from contextlib import contextmanager
 import logging
 
-# Import all models to ensure they're registered with Base
 from database.models import (
     Base, 
-    SyncMetadata, 
-    Company, 
-    Ledger,
-    SalesVoucher,
-    PurchaseVoucher,
-    ReceiptVoucher,
-    PaymentVoucher,
-    JournalVoucher,
-    ContraVoucher
 )
 
 logger = logging.getLogger(__name__)

@@ -264,14 +264,14 @@ class TallyConnector:
                 )
                 logger.info(f'Saved RAW XML (before sanitization): {raw_file}')
                 
-                # # Save sanitized response AFTER processing
-                # sanitized_content = self.sanitize_xml(response.content)
-                # sanitized_file = self._save_debug_file(
-                #     sanitized_content,
-                #     f'debug_{data_type.lower().replace(" ", "_")}_response',
-                #     company_name
-                # )
-                # logger.info(f'Saved SANITIZED XML (after processing): {sanitized_file}')
+                # Save sanitized response AFTER processing
+                sanitized_content = self.sanitize_xml(response.content)
+                sanitized_file = self._save_debug_file(
+                    sanitized_content,
+                    f'debug_{data_type.lower().replace(" ", "_")}_response',
+                    company_name
+                )
+                logger.info(f'Saved SANITIZED XML (after processing): {sanitized_file}')
             
             total_time = (datetime.now() - start_time).total_seconds()
             logger.info(f'Successfully fetched {data_type} XML for {company_name} in {total_time:.1f}s')
@@ -314,48 +314,48 @@ class TallyConnector:
 
     def _extract_company_details(self, company) -> Dict[str, Any]:
         return {
+            "guid": company.findtext("GUID", default=""),
             "name": company.findtext("NAME", default=""),
             "formal_name": company.findtext("BASICCOMPANYFORMALNAME", default=""),
-            "guid": company.findtext("GUID", default=""),
             "company_number": company.findtext("COMPANYNUMBER", default=""),
             "starting_from": company.findtext("STARTINGFROM", default=""),
             "books_from": company.findtext("BOOKSFROM", default=""),
             "audited_upto": company.findtext("AUDITEDUPTO", default=""),
-            "email": company.findtext("EMAIL", default=""),
-            "phone_number": company.findtext("PHONENUMBER", default=""),
-            "fax_number": company.findtext("FAXNUMBER", default=""),
-            "website": company.findtext("WEBSITE", default=""),
-            "contact_person": company.findtext("COMPANYCONTACTPERSON", default=""),
-            "contact_number": company.findtext("COMPANYCONTACTNUMBER", default=""),
-            "country": company.findtext("COUNTRYNAME", default=""),
-            "state": company.findtext("STATENAME", default=""),
-            "pincode": company.findtext("PINCODE", default=""),
-            "gstin": company.findtext("GSTREGISTRATIONNUMBER", default=""),
-            "gst_registration_type": company.findtext("GSTREGISTRATIONTYPE", default=""),
-            "pan": company.findtext("INCOMETAXNUMBER", default=""),
-            "tan": company.findtext("TANUMBER", default=""),
-            "vat_tin": company.findtext("VATTINNUMBER", default=""),
-            "sales_tax_number": company.findtext("SALESTAXNUMBER", default=""),
-            "service_tax_reg": company.findtext("STREGNUMBER", default=""),
-            "excise_reg": company.findtext("EXCISEREGN", default=""),
-            "cin": company.findtext("XBRLCIN", default=""),
-            "export_import_code": company.findtext("EXPORTIMPORTCODE", default=""),
-            "pf_code": company.findtext("CMPPFCODE", default=""),
-            "esi_code": company.findtext("CMPESICODE", default=""),
-            "is_gst_on": company.findtext("ISGSTON", default="No") == "Yes",
-            "is_accounting_on": company.findtext("ISACCOUNTINGON", default="No") == "Yes",
-            "is_inventory_on": company.findtext("ISINVENTORYON", default="No") == "Yes",
-            "is_integrated": company.findtext("ISINTEGRATED", default="No") == "Yes",
-            "is_billwise_on": company.findtext("ISBILLWISEON", default="No") == "Yes",
-            "is_cost_centres_on": company.findtext("ISCOSTCENTRESON", default="No") == "Yes",
-            "is_security_on": company.findtext("ISSECURITYON", default="No") == "Yes",
-            "is_payroll_on": company.findtext("ISPAYROLLON", default="No") == "Yes",
-            "gst_applicable_date": company.findtext("GSTAPPLICABLEDATE", default=""),
-            "type_of_supply": company.findtext("CMPTYPEOFSUPPLY", default=""),
-            "is_vat_on": company.findtext("INDIANVAT", default="No") == "Yes",
-            "vat_dealer_type": company.findtext("VATDEALERTYPE", default=""),
-            "show_bank_details": company.findtext("SHOWBANKDETAILS", default=""),
-            "is_ebanking_on": company.findtext("ISEBANKINGON", default="No") == "Yes",
+            # "email": company.findtext("EMAIL", default=""),
+            # "phone_number": company.findtext("PHONENUMBER", default=""),
+            # "fax_number": company.findtext("FAXNUMBER", default=""),
+            # "website": company.findtext("WEBSITE", default=""),
+            # "contact_person": company.findtext("COMPANYCONTACTPERSON", default=""),
+            # "contact_number": company.findtext("COMPANYCONTACTNUMBER", default=""),
+            # "country": company.findtext("COUNTRYNAME", default=""),
+            # "state": company.findtext("STATENAME", default=""),
+            # "pincode": company.findtext("PINCODE", default=""),
+            # "gstin": company.findtext("GSTREGISTRATIONNUMBER", default=""),
+            # "gst_registration_type": company.findtext("GSTREGISTRATIONTYPE", default=""),
+            # "pan": company.findtext("INCOMETAXNUMBER", default=""),
+            # "tan": company.findtext("TANUMBER", default=""),
+            # "vat_tin": company.findtext("VATTINNUMBER", default=""),
+            # "sales_tax_number": company.findtext("SALESTAXNUMBER", default=""),
+            # "service_tax_reg": company.findtext("STREGNUMBER", default=""),
+            # "excise_reg": company.findtext("EXCISEREGN", default=""),
+            # "cin": company.findtext("XBRLCIN", default=""),
+            # "export_import_code": company.findtext("EXPORTIMPORTCODE", default=""),
+            # "pf_code": company.findtext("CMPPFCODE", default=""),
+            # "esi_code": company.findtext("CMPESICODE", default=""),
+            # "is_gst_on": company.findtext("ISGSTON", default="No") == "Yes",
+            # "is_accounting_on": company.findtext("ISACCOUNTINGON", default="No") == "Yes",
+            # "is_inventory_on": company.findtext("ISINVENTORYON", default="No") == "Yes",
+            # "is_integrated": company.findtext("ISINTEGRATED", default="No") == "Yes",
+            # "is_billwise_on": company.findtext("ISBILLWISEON", default="No") == "Yes",
+            # "is_cost_centres_on": company.findtext("ISCOSTCENTRESON", default="No") == "Yes",
+            # "is_security_on": company.findtext("ISSECURITYON", default="No") == "Yes",
+            # "is_payroll_on": company.findtext("ISPAYROLLON", default="No") == "Yes",
+            # "gst_applicable_date": company.findtext("GSTAPPLICABLEDATE", default=""),
+            # "type_of_supply": company.findtext("CMPTYPEOFSUPPLY", default=""),
+            # "is_vat_on": company.findtext("INDIANVAT", default="No") == "Yes",
+            # "vat_dealer_type": company.findtext("VATDEALERTYPE", default=""),
+            # "show_bank_details": company.findtext("SHOWBANKDETAILS", default=""),
+            # "is_ebanking_on": company.findtext("ISEBANKINGON", default="No") == "Yes",
         }
 
     def fetch_all_ledgers(self, company_name: str, from_date: Optional[str] = None, 
