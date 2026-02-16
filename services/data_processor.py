@@ -365,6 +365,9 @@ def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name='ledger', outp
                         # Negative amounts = Debit, Positive amounts = Credit
                         amount_type = 'Debit' if currency_info['amount'] < 0 else 'Credit'
                         
+                        # Convert amount to absolute value (remove negative sign)
+                        absolute_amount = abs(currency_info['amount'])
+                        
                         row_data = {
                             'guid': guid,
                             'alter_id': alter_id,
@@ -375,7 +378,7 @@ def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name='ledger', outp
                             'reference': reference,
                             'change_status': change_status,
                             'ledger_name': ledger_name,
-                            'amount': currency_info['amount'],
+                            'amount': absolute_amount,  # Changed: now stores absolute value
                             'amount_type': amount_type,
                             'currency': currency_info['currency'],
                             'exchange_rate': currency_info['exchange_rate'],
@@ -398,7 +401,8 @@ def process_ledger_voucher_to_xlsx(xml_content, voucher_type_name='ledger', outp
             import traceback
             logger.error(traceback.format_exc())
             return pd.DataFrame()
-
+        
+        
 def process_inventory_voucher_to_xlsx(xml_content, voucher_type_name='inventory', output_filename='inventory_vouchers.xlsx'):
     """
     Process inventory vouchers with rate, amount, discount in ORIGINAL CURRENCY
