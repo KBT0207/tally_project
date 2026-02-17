@@ -90,3 +90,5 @@ Thumbs.db
 # =========================
 !utils/
 !utils/**/*.xml
+!utils/cdc/
+!utils/cdc/*.xml
