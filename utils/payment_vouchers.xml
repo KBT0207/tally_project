@@ -14,14 +14,26 @@
                 <SVFROMDATE>20250101</SVFROMDATE>
                 <SVTODATE>20251231</SVTODATE>
             </STATICVARIABLES>
-
             <TDL>
                 <TDLMESSAGE>
-
                     <COLLECTION NAME="PaymentVouchers">
                         <TYPE>Voucher</TYPE>
-                        <FETCH>*</FETCH>
                         <FILTER>IsPaymentVoucher</FILTER>
+
+                        <!-- Voucher Header Fields -->
+                        <FETCH>GUID</FETCH>
+                        <FETCH>ALTERID</FETCH>
+                        <FETCH>MASTERID</FETCH>
+                        <FETCH>VOUCHERNUMBER</FETCH>
+                        <FETCH>VOUCHERTYPENAME</FETCH>
+                        <FETCH>DATE</FETCH>
+                        <FETCH>REFERENCE</FETCH>
+                        <FETCH>NARRATION</FETCH>
+
+                        <!-- Ledger Entry Fields -->
+                        <FETCH>ALLLEDGERENTRIES.LEDGERNAME</FETCH>
+                        <FETCH>ALLLEDGERENTRIES.AMOUNT</FETCH>
+
                     </COLLECTION>
 
                     <SYSTEM TYPE="Formulae" NAME="IsPaymentVoucher">
@@ -30,7 +42,6 @@
 
                 </TDLMESSAGE>
             </TDL>
-
         </DESC>
     </BODY>
 </ENVELOPE>

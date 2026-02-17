@@ -13,7 +13,7 @@ from services.data_processor import (
 )
 
 FROM_DATE = '20250401'
-TO_DATE = '20250430'
+TO_DATE = '20250415'
 
 OUTPUT_DIR = f"tally_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
@@ -84,37 +84,37 @@ for idx, company in enumerate(companies, 1):
         'Status': 'Processing'
     }
     
-    try:
-        print("1. TRIAL BALANCE")
-        print("-" * 40)
-        tb_data = fetch_with_retry(tally.fetch_trial_balance, company_name=comp_name, from_date=FROM_DATE, to_date=TO_DATE)
-        if tb_data:
-            tb_file = os.path.join(company_dir, "trial_balance.xlsx")
-            tb_df = trial_balance_to_xlsx(tb_data, comp_name, FROM_DATE, TO_DATE, tb_file)
-            company_summary['Trial Balance'] = len(tb_df)
-            print(f"   Exported: {len(tb_df)} records → trial_balance.xlsx")
-        else:
-            print(f"   No data available")
-        print()
-        time.sleep(WAIT_BETWEEN_VOUCHERS)
-    except Exception as e:
-        print(f"   Failed: {e}\n")
+    # try:
+    #     print("1. TRIAL BALANCE")
+    #     print("-" * 40)
+    #     tb_data = fetch_with_retry(tally.fetch_trial_balance, company_name=comp_name, from_date=FROM_DATE, to_date=TO_DATE)
+    #     if tb_data:
+    #         tb_file = os.path.join(company_dir, "trial_balance.xlsx")
+    #         tb_df = trial_balance_to_xlsx(tb_data, comp_name, FROM_DATE, TO_DATE, tb_file)
+    #         company_summary['Trial Balance'] = len(tb_df)
+    #         print(f"   Exported: {len(tb_df)} records → trial_balance.xlsx")
+    #     else:
+    #         print(f"   No data available")
+    #     print()
+    #     time.sleep(WAIT_BETWEEN_VOUCHERS)
+    # except Exception as e:
+    #     print(f"   Failed: {e}\n")
     
-    try:
-        print("2. ALL LEDGERS")
-        print("-" * 40)
-        ledger_data = fetch_with_retry(tally.fetch_all_ledgers, company_name=comp_name)
-        if ledger_data:
-            ledger_file = os.path.join(company_dir, "all_ledgers.xlsx")
-            ledger_df = extract_all_ledgers_to_xlsx(ledger_data, comp_name, ledger_file)
-            company_summary['Ledgers'] = len(ledger_df)
-            print(f"   Exported: {len(ledger_df)} records → all_ledgers.xlsx")
-        else:
-            print(f"   No data available")
-        print()
-        time.sleep(WAIT_BETWEEN_VOUCHERS)
-    except Exception as e:
-        print(f"   Failed: {e}\n")
+    # try:
+    #     print("2. ALL LEDGERS")
+    #     print("-" * 40)
+    #     ledger_data = fetch_with_retry(tally.fetch_all_ledgers, company_name=comp_name)
+    #     if ledger_data:
+    #         ledger_file = os.path.join(company_dir, "all_ledgers.xlsx")
+    #         ledger_df = extract_all_ledgers_to_xlsx(ledger_data, comp_name, ledger_file)
+    #         company_summary['Ledgers'] = len(ledger_df)
+    #         print(f"   Exported: {len(ledger_df)} records → all_ledgers.xlsx")
+    #     else:
+    #         print(f"   No data available")
+    #     print()
+    #     time.sleep(WAIT_BETWEEN_VOUCHERS)
+    # except Exception as e:
+    #     print(f"   Failed: {e}\n")
     
     voucher_types = [
         ('Sales', 'fetch_all_sales_vouchers', process_inventory_voucher_to_xlsx, 'sales.xlsx'),
