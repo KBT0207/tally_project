@@ -1,24 +1,26 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <ENVELOPE>
     <HEADER>
         <VERSION>1</VERSION>
         <TALLYREQUEST>Export</TALLYREQUEST>
-        <TYPE>Data</TYPE>
-        <ID>Credit Note Vouchers</ID>
+        <TYPE>Collection</TYPE>
+        <ID>MySalesCollection</ID>
     </HEADER>
+
     <BODY>
         <DESC>
+
             <STATICVARIABLES>
                 <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-                <SVCURRENTCOMPANY>COMPANY_NAME_HERE</SVCURRENTCOMPANY>
-                <SVFROMDATE>20250101</SVFROMDATE>
-                <SVTODATE>20251231</SVTODATE>
+                <SVCURRENTCOMPANY>{{COMPANY_NAME}}</SVCURRENTCOMPANY>
             </STATICVARIABLES>
+
             <TDL>
                 <TDLMESSAGE>
-                    <COLLECTION NAME="CreditNoteVouchers">
-                        <TYPE>Vouchers</TYPE>
-                        <FILTER>IsCreditNoteVoucher</FILTER>
+
+                    <COLLECTION NAME="MySalesCollection">
+                        <TYPE>Voucher</TYPE>
+                        <CHILDOF>Sales</CHILDOF>
+                        <FILTER>FilterByAlterID</FILTER>
 
                         <!-- Voucher Header Fields -->
                         <FETCH>GUID</FETCH>
@@ -56,9 +58,14 @@
                         <FETCH>ALLINVENTORYENTRIES.ACCOUNTINGALLOCATIONS.GSTHSNSACCODE</FETCH>
 
                     </COLLECTION>
-                    <SYSTEM TYPE="Formulae" NAME="IsCreditNoteVoucher">$$IsCreditNote:$VoucherTypeName</SYSTEM>
+
+                    <SYSTEM TYPE="Formulae" NAME="FilterByAlterID">
+                        $$Number:$AlterID > {{ALTER_ID}}
+                    </SYSTEM>
+
                 </TDLMESSAGE>
             </TDL>
+
         </DESC>
     </BODY>
 </ENVELOPE>

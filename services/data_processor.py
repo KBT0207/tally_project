@@ -849,6 +849,7 @@ def trial_balance_to_xlsx(xml_content, comp_name: str, start_date: str, end_date
         rows = []
 
         for ledger in ledger_nodes:
+            # --- NAME ---
             ledger_name = ledger.get('NAME', '')
             if not ledger_name:
                 ledger_name = ledger.findtext('LEDGERNAME', '')
@@ -857,35 +858,55 @@ def trial_balance_to_xlsx(xml_content, comp_name: str, start_date: str, end_date
             if not ledger_name:
                 continue
 
+            # --- IDs ---
+            guid      = clean_text(ledger.findtext('GUID', ''))
+            alter_id  = clean_text(ledger.findtext('ALTERID', '0'))
+            master_id = clean_text(ledger.findtext('MASTERID', ''))
+
+            # --- PARENT GROUP ---
             parent_group = clean_text(ledger.findtext('PARENT', ''))
 
+            # --- BALANCES ---
             opening_text = clean_text(ledger.findtext('OPENINGBALANCE', '0'))
             closing_text = clean_text(ledger.findtext('CLOSINGBALANCE', '0'))
 
-            opening_val = convert_to_float(extract_numeric_amount(str(opening_text)))
-            closing_val = convert_to_float(extract_numeric_amount(str(closing_text)))
+            opening_val      = convert_to_float(extract_numeric_amount(str(opening_text)))
+            closing_val      = convert_to_float(extract_numeric_amount(str(closing_text)))
             net_transactions = closing_val - opening_val
 
             rows.append({
-                'ledger_name': ledger_name,
-                'parent_group': parent_group,
-                'opening_balance': opening_val,
+                'ledger_name'     : ledger_name,
+                'parent_group'    : parent_group,
+                'opening_balance' : opening_val,
                 'net_transactions': net_transactions,
-                'closing_balance': closing_val,
-                'start_date': start_date,
-                'end_date': end_date,
-                'company_name': comp_name,
+                'closing_balance' : closing_val,
+                'start_date'      : start_date,
+                'end_date'        : end_date,
+                'company_name'    : comp_name,
+                'guid'            : guid,
+                'alter_id'        : alter_id,
+                'master_id'       : master_id,
             })
 
         df = pd.DataFrame(rows)
-        date_col = ['start_date','end_date']
-        for col in date_col:
+
+        # --- DATE FORMATTING ---
+        for col in ['start_date', 'end_date']:
             df[col] = pd.to_datetime(
                 df[col],
                 format="%Y%m%d",
                 errors="coerce"
             ).dt.date
+
+        # --- COLUMN ORDER ---
+        columns = [
+            'ledger_name', 'parent_group',
+            'opening_balance', 'net_transactions', 'closing_balance',
+            'start_date', 'end_date', 'company_name',
+            'guid', 'alter_id', 'master_id'
+        ]
         if not df.empty:
+            df = df[columns]
             df = df.sort_values('ledger_name').reset_index(drop=True)
 
         df.to_excel(output_filename, index=False)

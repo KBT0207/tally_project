@@ -17,7 +17,18 @@
                 <TDLMESSAGE>
                     <COLLECTION NAME="TrialBalance">
                         <TYPE>Ledger</TYPE>
-                        <FETCH>Name, Parent, OpeningBalance, ClosingBalance</FETCH>
+
+                        <!-- Identity Fields -->
+                        <FETCH>GUID</FETCH>
+                        <FETCH>ALTERID</FETCH>
+                        <FETCH>MASTERID</FETCH>
+
+                        <!-- Ledger Fields -->
+                        <FETCH>NAME</FETCH>
+                        <FETCH>PARENT</FETCH>
+                        <FETCH>OPENINGBALANCE</FETCH>
+                        <FETCH>CLOSINGBALANCE</FETCH>
+
                     </COLLECTION>
                 </TDLMESSAGE>
             </TDL>
