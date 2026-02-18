@@ -6,6 +6,15 @@ __pycache__/
 *$py.class
 
 # =========================
+# Virtual environments
+# =========================
+.venv/
+venv/
+env/
+ENV/
+.virtualenv/
+
+# =========================
 # Environment variables
 # =========================
 .env
@@ -13,35 +22,23 @@ __pycache__/
 *.env
 
 # =========================
-# Virtual environments
-# =========================
-.venv/
-venv/
-ENV/
-env/
-.virtualenv/
-
-# =========================
 # Logs
 # =========================
 logs/
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 
 # =========================
-# Build / distribution
+# Build / Distribution
 # =========================
 build/
 dist/
-wheels/
 *.egg-info/
 .eggs/
+wheels/
 MANIFEST
 
 # =========================
-# Test / coverage
+# Testing / Coverage
 # =========================
 .pytest_cache/
 .coverage
@@ -52,16 +49,15 @@ htmlcov/
 .cache/
 
 # =========================
-# IDE / Editor files
+# IDE / Editor
 # =========================
 .vscode/
 .idea/
 *.swp
 *.swo
-*.swn
 
 # =========================
-# OS files
+# OS Files
 # =========================
 .DS_Store
 Thumbs.db
@@ -79,16 +75,17 @@ Thumbs.db
 *.old
 
 # =========================
-# Data files (Ignore globally)
+# Data files (ignore globally)
 # =========================
 *.xlsx
 *.csv
+
+# Ignore ALL xml by default
 *.xml
 
 # =========================
-# Allow XML files inside utils folder
+# Allow XML inside utils/cdc
 # =========================
 !utils/
-!utils/**/*.xml
 !utils/cdc/
 !utils/cdc/*.xml

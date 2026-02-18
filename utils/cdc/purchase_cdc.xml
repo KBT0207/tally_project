@@ -4,7 +4,7 @@
         <VERSION>1</VERSION>
         <TALLYREQUEST>Export</TALLYREQUEST>
         <TYPE>Data</TYPE>
-        <ID>Sales Vouchers</ID>
+        <ID>Purchase Vouchers</ID>
     </HEADER>
     <BODY>
         <DESC>
@@ -14,9 +14,9 @@
             </STATICVARIABLES>
             <TDL>
                 <TDLMESSAGE>
-                    <COLLECTION NAME="SalesVouchers">
+                    <COLLECTION NAME="PurchaseVouchers">
                         <TYPE>Vouchers</TYPE>
-                        <FILTER>IsSalesVoucher</FILTER>
+                        <FILTER>IsPurchaseVoucher</FILTER>
                         <FILTER>FilterByAlterID</FILTER>
 
                         <FETCH>GUID</FETCH>
@@ -46,7 +46,7 @@
                         <FETCH>ALLINVENTORYENTRIES.ACCOUNTINGALLOCATIONS.GSTHSNSACCODE</FETCH>
                     </COLLECTION>
 
-                    <SYSTEM TYPE="Formulae" NAME="IsSalesVoucher">$$IsSales:$VoucherTypeName</SYSTEM>
+                    <SYSTEM TYPE="Formulae" NAME="IsPurchaseVoucher">$$IsPurchase:$VoucherTypeName</SYSTEM>
                     <SYSTEM TYPE="Formulae" NAME="FilterByAlterID">$$Number:$AlterID > 0</SYSTEM>
 
                 </TDLMESSAGE>

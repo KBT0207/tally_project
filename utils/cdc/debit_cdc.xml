@@ -4,7 +4,7 @@
         <VERSION>1</VERSION>
         <TALLYREQUEST>Export</TALLYREQUEST>
         <TYPE>Data</TYPE>
-        <ID>Sales Vouchers</ID>
+        <ID>Debit Note Vouchers</ID>
     </HEADER>
     <BODY>
         <DESC>
@@ -14,9 +14,9 @@
             </STATICVARIABLES>
             <TDL>
                 <TDLMESSAGE>
-                    <COLLECTION NAME="SalesVouchers">
-                        <TYPE>Vouchers</TYPE>
-                        <FILTER>IsSalesVoucher</FILTER>
+                    <COLLECTION NAME="DebitNoteVouchers">
+                        <TYPE>Voucher</TYPE>
+                        <FILTER>IsDebitNoteVoucher</FILTER>
                         <FILTER>FilterByAlterID</FILTER>
 
                         <FETCH>GUID</FETCH>
@@ -46,7 +46,7 @@
                         <FETCH>ALLINVENTORYENTRIES.ACCOUNTINGALLOCATIONS.GSTHSNSACCODE</FETCH>
                     </COLLECTION>
 
-                    <SYSTEM TYPE="Formulae" NAME="IsSalesVoucher">$$IsSales:$VoucherTypeName</SYSTEM>
+                    <SYSTEM TYPE="Formulae" NAME="IsDebitNoteVoucher">$$IsDebitNote:$VoucherTypeName</SYSTEM>
                     <SYSTEM TYPE="Formulae" NAME="FilterByAlterID">$$Number:$AlterID > 0</SYSTEM>
 
                 </TDLMESSAGE>
