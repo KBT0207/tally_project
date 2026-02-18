@@ -33,7 +33,7 @@ from database.database_processor import (
 )
 
 VOUCHER_WORKERS       = 8
-SNAPSHOT_CHUNK_MONTHS = 6
+SNAPSHOT_CHUNK_MONTHS = 3
 
 VOUCHER_CONFIG = [
     {

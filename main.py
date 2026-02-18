@@ -4,9 +4,20 @@ from services.tally_connector import TallyConnector
 from services.sync_service import sync_all_companies
 from database.db_connector import DatabaseConnector
 from database.database_processor import company_import_db
-from database.config.config import DB_USERNAME, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME
+from dotenv import load_dotenv
+import os
 
-MANUAL_FROM_DATE = None       # auto per company  - MANUAL_FROM_DATE = '20240401' # manual override
+load_dotenv(".env")
+
+DB_USERNAME = os.getenv('DB_USERNAME', 'root')
+DB_PASSWORD = os.getenv('DB_PASSWORD', 'root')
+DB_HOST     = os.getenv('DB_HOST', 'localhost')
+DB_PORT     = int(os.getenv('DB_PORT', 3306))
+DB_NAME     = os.getenv('DB_NAME', 'tally_db')
+
+
+
+MANUAL_FROM_DATE = None       # MANUAL_FROM_DATE = '20240401'
 
 
 

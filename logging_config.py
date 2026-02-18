@@ -36,7 +36,7 @@ LOGGING_CONFIG = {
             "class": "logging.handlers.TimedRotatingFileHandler",
             "level": "INFO",
             "formatter": "standard",
-            "filename": os.path.join(LOG_DIR, f"main_{today_date}.log"),
+            "filename": os.path.join(LOG_DIR, "main.log"),
             "when": "midnight",
             "interval": 1,
             "backupCount": 30,
@@ -46,7 +46,7 @@ LOGGING_CONFIG = {
             "class": "logging.handlers.TimedRotatingFileHandler",
             "level": "ERROR",
             "formatter": "standard",
-            "filename": os.path.join(LOG_DIR, f"error_{today_date}.log"),
+            "filename": os.path.join(LOG_DIR, "error.log"),
             "when": "midnight",
             "interval": 1,
             "backupCount": 30,
@@ -62,6 +62,7 @@ LOGGING_CONFIG = {
         ],
     },
 }
+
 
 logging.config.dictConfig(LOGGING_CONFIG)
 
