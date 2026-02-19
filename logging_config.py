@@ -21,7 +21,7 @@ LOGGING_CONFIG = {
     "disable_existing_loggers": False,
     "formatters": {
         "standard": {
-            "format": "%(asctime)s | %(levelname)-8s | %(filename)s:%(lineno)d | %(funcName)s() | %(message)s"
+            "format": "%(asctime)s | %(levelname)-8s | %(filename)s:%(lineno)d | %(message)s"
         }
     },
     "handlers": {
