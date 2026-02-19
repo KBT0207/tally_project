@@ -115,33 +115,27 @@ class TallyConnector:
             logger.debug(f'Cached XML template: {template_path}')
         return ET.fromstring(ET.tostring(cls._xml_template_cache[template_path]))
     
-    def _prepare_xml_request(
-        self,
-        template_path: str,
-        company_name: str,
-        from_date: Optional[str] = None,
-        to_date: Optional[str] = None,
-        alter_id: Optional[int] = None
-    ) -> bytes:
+    def _prepare_xml_request(self, template_path, company_name, from_date=None, to_date=None, alter_id=None):
         root = self._load_xml_template(template_path)
         
         for sv_elem in root.iter('SVCURRENTCOMPANY'):
             sv_elem.text = company_name
-        
         if from_date:
             for sv_elem in root.iter('SVFROMDATE'):
                 sv_elem.text = from_date
-        
         if to_date:
             for sv_elem in root.iter('SVTODATE'):
                 sv_elem.text = to_date
-        
+
+        xml_str = ET.tostring(root, encoding='unicode')
+
         if alter_id is not None:
-            for sys_elem in root.iter('SYSTEM'):
-                if sys_elem.get('NAME') == 'FilterByAlterID':
-                    sys_elem.text = f'$$Number:$AlterID > {alter_id}'
-        
-        return ET.tostring(root, encoding='utf-8')
+            xml_str = xml_str.replace(
+                'PLACEHOLDER_ALTER_ID',
+                f'$$Number:$AlterID > {alter_id}'
+            )
+
+        return xml_str.encode('utf-8')
     
     def _save_debug_file(self, content: bytes, prefix: str, company_name: str, suffix: str = 'xml'):
         safe_company = company_name.replace(' ', '_')
@@ -178,7 +172,18 @@ class TallyConnector:
             
             if alter_id is not None:
                 logger.info(f'CDC mode — fetching records with AlterID > {alter_id}')
-            
+                # Verify the filter was correctly injected into the XML
+                try:
+                    payload_str = xml_payload.decode('utf-8') if isinstance(xml_payload, bytes) else xml_payload
+                    import re as _re
+                    filter_match = _re.search(r'NAME=["\']FilterByAlterID["\'][^>]*>(.*?)<', payload_str)
+                    if filter_match:
+                        logger.debug(f'[ALTER_ID CHECK] FilterByAlterID in XML = "{filter_match.group(1).strip()}"')
+                    else:
+                        logger.warning(f'[ALTER_ID CHECK] FilterByAlterID tag NOT FOUND in XML payload — filter may not be applied!')
+                except Exception as _e:
+                    logger.debug(f'[ALTER_ID CHECK] Could not inspect XML payload: {_e}')
+
             if debug:
                 self._save_debug_file(
                     xml_payload,
@@ -222,7 +227,33 @@ class TallyConnector:
             
             total_time = (datetime.now() - start_time).total_seconds()
             logger.info(f'Fetched {data_type} for {company_name} in {total_time:.1f}s')
-            
+
+            # Debug: parse response and show alter_id range to verify filter worked
+            if alter_id is not None:
+                try:
+                    sanitized = self.sanitize_xml(response.content)
+                    import xml.etree.ElementTree as _ET
+                    root_resp = _ET.fromstring(sanitized)
+                    all_alter_ids = [
+                        int(elem.text)
+                        for elem in root_resp.iter('ALTERID')
+                        if elem.text and elem.text.strip().isdigit()
+                    ]
+                    if all_alter_ids:
+                        min_id = min(all_alter_ids)
+                        max_id = max(all_alter_ids)
+                        count  = len(all_alter_ids)
+                        logger.debug(
+                            f'[ALTER_ID CHECK] Response has {count} record(s) | '
+                            f'AlterID range: {min_id} → {max_id} | '
+                            f'Filter was: > {alter_id} | '
+                            f'{"✓ All above threshold" if min_id > alter_id else "✗ WARNING: Some records AT OR BELOW threshold — filter may not be working!"}'
+                        )
+                    else:
+                        logger.debug(f'[ALTER_ID CHECK] No ALTERID tags found in response (empty result or different tag name)')
+                except Exception as _e:
+                    logger.debug(f'[ALTER_ID CHECK] Could not inspect response: {_e}')
+
             return self.sanitize_xml(response.content)
             
         except Exception as e:

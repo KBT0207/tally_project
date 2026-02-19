@@ -27,6 +27,21 @@ def _log_result(label, inserted, updated, unchanged, skipped, deleted=0):
     )
 
 
+def _log_changes(label, existing, update_fields, new_row):
+    """Log before/after values for fields that actually changed."""
+    changes = []
+    for field in update_fields:
+        old_val = getattr(existing, field, None)
+        new_val = new_row.get(field)
+        if str(old_val) != str(new_val):
+            changes.append(f"  {field}: [{old_val}] → [{new_val}]")
+    if changes:
+        logger.debug(
+            f"{label} | guid={getattr(existing, 'guid', '?')} | "
+            f"{len(changes)} field(s) changed:\n" + "\n".join(changes)
+        )
+
+
 def _t(value, max_len):
     if value is None:
         return None
@@ -81,6 +96,7 @@ def _upsert_inventory_voucher_in_session(rows, model_class, db):
 
         if existing:
             if int(row.get('alter_id', 0)) > int(existing.alter_id or 0):
+                _log_changes("inventory_voucher UPDATE", existing, update_fields, row)
                 for field in update_fields:
                     setattr(existing, field, row.get(field))
                 updated += 1
@@ -169,6 +185,7 @@ def _upsert_ledger_voucher_in_session(rows, model_class, db):
 
         if existing:
             if int(row.get('alter_id', 0)) > int(existing.alter_id or 0):
+                _log_changes("ledger_voucher UPDATE", existing, update_fields, row)
                 for field in update_fields:
                     setattr(existing, field, row.get(field))
                 updated += 1
@@ -304,6 +321,7 @@ def _upsert_inventory(rows, model_class, unique_fields, update_fields, engine):
 
             if existing:
                 if int(row.get('alter_id', 0)) > int(existing.alter_id or 0):
+                    _log_changes("inventory UPDATE", existing, update_fields, row)
                     for field in update_fields:
                         setattr(existing, field, row.get(field))
                     updated += 1
@@ -424,6 +442,7 @@ def upsert_trial_balance(rows, engine):
 
             if existing:
                 if int(row.get('alter_id', 0)) > int(existing.alter_id or 0):
+                    _log_changes("trial_balance UPDATE", existing, update_fields, row)
                     for field in update_fields:
                         setattr(existing, field, row.get(field))
                     updated += 1
@@ -497,11 +516,19 @@ def company_import_db(data, engine):
 
             if existing:
                 is_changed = False
+                changes = []
                 for field in fields:
-                    if getattr(existing, field) != row.get(field):
-                        setattr(existing, field, row.get(field))
+                    old_val = getattr(existing, field)
+                    new_val = row.get(field)
+                    if old_val != new_val:
+                        changes.append(f"  {field}: [{old_val}] → [{new_val}]")
+                        setattr(existing, field, new_val)
                         is_changed = True
                 if is_changed:
+                    logger.debug(
+                        f"company UPDATE | guid={row['guid']} | "
+                        f"{len(changes)} field(s) changed:\n" + "\n".join(changes)
+                    )
                     updated += 1
                 else:
                     unchanged += 1
@@ -594,6 +621,7 @@ def upsert_ledgers(rows, engine):
 
             if existing:
                 if int(safe['alter_id']) > int(existing.alter_id or 0):
+                    _log_changes("ledger UPDATE", existing, [f for f in safe if f not in ('guid', 'company_name')], safe)
                     for field, value in safe.items():
                         if field not in ('guid', 'company_name'):
                             setattr(existing, field, value)

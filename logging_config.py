@@ -1,21 +1,20 @@
 import logging
 import logging.config
-from logging.handlers import TimedRotatingFileHandler
 import os
 from datetime import datetime
-import sys
-import io
 
-if sys.stdout.encoding != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-if sys.stderr.encoding != "utf-8":
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
-
+# Base directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_DIR = os.path.join(BASE_DIR, "..", "logs")
+
+# Logs directory
+LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
+# Get today's date
 today_date = datetime.now().strftime("%d-%b-%Y")
+
+main_log_file = os.path.join(LOG_DIR, f"main_{today_date}.log")
+error_log_file = os.path.join(LOG_DIR, f"error_{today_date}.log")
 
 LOGGING_CONFIG = {
     "version": 1,
@@ -28,33 +27,27 @@ LOGGING_CONFIG = {
     "handlers": {
         "console_handler": {
             "class": "logging.StreamHandler",
-            "level": "INFO",
+            "level": "DEBUG",
             "formatter": "standard",
             "stream": "ext://sys.stdout",
         },
         "file_handler": {
-            "class": "logging.handlers.TimedRotatingFileHandler",
-            "level": "INFO",
+            "class": "logging.FileHandler",
+            "level": "DEBUG",
             "formatter": "standard",
-            "filename": os.path.join(LOG_DIR, "main.log"),
-            "when": "midnight",
-            "interval": 1,
-            "backupCount": 30,
+            "filename": main_log_file,
             "encoding": "utf-8",
         },
         "error_file_handler": {
-            "class": "logging.handlers.TimedRotatingFileHandler",
+            "class": "logging.FileHandler",
             "level": "ERROR",
             "formatter": "standard",
-            "filename": os.path.join(LOG_DIR, "error.log"),
-            "when": "midnight",
-            "interval": 1,
-            "backupCount": 30,
+            "filename": error_log_file,
             "encoding": "utf-8",
         },
     },
     "root": {
-        "level": "INFO",
+        "level": "DEBUG",
         "handlers": [
             "console_handler",
             "file_handler",
@@ -63,7 +56,6 @@ LOGGING_CONFIG = {
     },
 }
 
-
 logging.config.dictConfig(LOGGING_CONFIG)
 
-logger = logging.getLogger("main")
+logger = logging.getLogger()
