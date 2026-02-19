@@ -89,3 +89,6 @@ Thumbs.db
 !utils/
 !utils/cdc/
 !utils/cdc/*.xml
+
+# Allow example env file
+!.env.sample
