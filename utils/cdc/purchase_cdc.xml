@@ -47,7 +47,7 @@
                     </COLLECTION>
 
                     <SYSTEM TYPE="Formulae" NAME="IsPurchaseVoucher">$$IsPurchase:$VoucherTypeName</SYSTEM>
-                    <SYSTEM TYPE="Formulae" NAME="FilterByAlterID">$$Number:$AlterID > 0</SYSTEM>
+                    <SYSTEM TYPE="Formulae" NAME="FilterByAlterID">PLACEHOLDER_ALTER_ID</SYSTEM>
 
                 </TDLMESSAGE>
             </TDL>

@@ -115,9 +115,16 @@ class TallyConnector:
             logger.debug(f'Cached XML template: {template_path}')
         return ET.fromstring(ET.tostring(cls._xml_template_cache[template_path]))
     
-    def _prepare_xml_request(self, template_path, company_name, from_date=None, to_date=None, alter_id=None):
+    def _prepare_xml_request(
+        self,
+        template_path: str,
+        company_name: str,
+        from_date=None,
+        to_date=None,
+        alter_id=None
+    ) -> bytes:
         root = self._load_xml_template(template_path)
-        
+
         for sv_elem in root.iter('SVCURRENTCOMPANY'):
             sv_elem.text = company_name
         if from_date:
@@ -133,6 +140,11 @@ class TallyConnector:
             xml_str = xml_str.replace(
                 'PLACEHOLDER_ALTER_ID',
                 f'$$Number:$AlterID > {alter_id}'
+            )
+        else:
+            xml_str = xml_str.replace(
+                'PLACEHOLDER_ALTER_ID',
+                '$$Number:$AlterID > 0'
             )
 
         return xml_str.encode('utf-8')

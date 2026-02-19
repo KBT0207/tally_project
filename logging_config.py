@@ -21,7 +21,7 @@ LOGGING_CONFIG = {
     "disable_existing_loggers": False,
     "formatters": {
         "standard": {
-            "format": "%(asctime)s | %(levelname)-8s | %(name)s:%(lineno)d | %(message)s"
+            "format": "%(asctime)s | %(levelname)-8s | %(filename)s:%(lineno)d | %(funcName)s() | %(message)s"
         }
     },
     "handlers": {
@@ -58,4 +58,4 @@ LOGGING_CONFIG = {
 
 logging.config.dictConfig(LOGGING_CONFIG)
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
