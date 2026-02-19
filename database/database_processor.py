@@ -11,10 +11,8 @@ from database.models.trial_balance import TrialBalance
 import pandas as pd
 from logging_config import logger
 
-
 def _get_session(engine):
     return sessionmaker(bind=engine)()
-
 
 def _log_result(label, inserted, updated, unchanged, skipped, deleted=0):
     logger.info(
@@ -26,9 +24,7 @@ def _log_result(label, inserted, updated, unchanged, skipped, deleted=0):
         f"Skipped: {skipped}"
     )
 
-
 def _log_changes(label, existing, update_fields, new_row):
-    """Log before/after values for fields that actually changed."""
     changes = []
     for field in update_fields:
         old_val = getattr(existing, field, None)
@@ -41,7 +37,6 @@ def _log_changes(label, existing, update_fields, new_row):
             f"{len(changes)} field(s) changed:\n" + "\n".join(changes)
         )
 
-
 def _t(value, max_len):
     if value is None:
         return None
@@ -50,7 +45,6 @@ def _t(value, max_len):
         logger.debug(f"Truncating value of length {len(value)} to {max_len}: {value[:30]}...")
         return value[:max_len]
     return value
-
 
 def _upsert_inventory_voucher_in_session(rows, model_class, db):
     inserted = updated = unchanged = skipped = deleted = 0
@@ -74,7 +68,6 @@ def _upsert_inventory_voucher_in_session(rows, model_class, db):
 
         is_deleted_flag = row.get('is_deleted', 'No')
 
-        # Deleted stub row — mark ALL rows with this guid as deleted
         if is_deleted_flag == 'Yes':
             affected = db.query(model_class).filter_by(
                 guid         = row['guid'],
@@ -147,7 +140,6 @@ def _upsert_inventory_voucher_in_session(rows, model_class, db):
 
     return inserted, updated, unchanged, skipped, deleted
 
-
 def _upsert_ledger_voucher_in_session(rows, model_class, db):
     inserted = updated = unchanged = skipped = deleted = 0
 
@@ -164,7 +156,6 @@ def _upsert_ledger_voucher_in_session(rows, model_class, db):
 
         is_deleted_flag = row.get('is_deleted', 'No')
 
-        # Deleted stub row — mark ALL rows with this guid as deleted
         if is_deleted_flag == 'Yes':
             affected = db.query(model_class).filter_by(
                 guid         = row['guid'],
@@ -214,8 +205,7 @@ def _upsert_ledger_voucher_in_session(rows, model_class, db):
 
     return inserted, updated, unchanged, skipped, deleted
 
-
-def upsert_and_advance_month(rows, model_class, upsert_fn, company_name, voucher_type, month_str, engine):
+def upsert_and_advance_month(rows, model_class, upsert_fn, company_name, voucher_type, month_str, engine, chunk_max_alter_id=0):
     db = _get_session(engine)
     try:
         inserted, updated, unchanged, skipped, deleted = upsert_fn(rows, model_class, db)
@@ -228,11 +218,14 @@ def upsert_and_advance_month(rows, model_class, upsert_fn, company_name, voucher
         if state:
             state.last_synced_month = month_str
             state.last_sync_time    = datetime.utcnow()
+
+            if chunk_max_alter_id > (state.last_alter_id or 0):
+                state.last_alter_id = chunk_max_alter_id
         else:
             db.add(SyncState(
                 company_name      = company_name,
                 voucher_type      = voucher_type,
-                last_alter_id     = 0,
+                last_alter_id     = chunk_max_alter_id,
                 is_initial_done   = False,
                 last_synced_month = month_str,
                 last_sync_time    = datetime.utcnow(),
@@ -252,7 +245,6 @@ def upsert_and_advance_month(rows, model_class, upsert_fn, company_name, voucher
     finally:
         db.close()
 
-
 def get_sync_state(company_name, voucher_type, engine):
     db = _get_session(engine)
     try:
@@ -262,7 +254,6 @@ def get_sync_state(company_name, voucher_type, engine):
         ).first()
     finally:
         db.close()
-
 
 def update_sync_state(company_name, voucher_type, last_alter_id, engine, last_synced_month=None, is_initial_done=True):
     db = _get_session(engine)
@@ -300,7 +291,6 @@ def update_sync_state(company_name, voucher_type, last_alter_id, engine, last_sy
         raise
     finally:
         db.close()
-
 
 def _upsert_inventory(rows, model_class, unique_fields, update_fields, engine):
     if not rows:
@@ -345,7 +335,6 @@ def _upsert_inventory(rows, model_class, unique_fields, update_fields, engine):
 
     return inserted, updated, unchanged, skipped
 
-
 def _upsert_inventory_voucher(rows, model_class, engine):
     if not rows:
         logger.warning(f"No rows to upsert for {model_class.__tablename__}")
@@ -362,7 +351,6 @@ def _upsert_inventory_voucher(rows, model_class, engine):
     finally:
         db.close()
 
-
 def _upsert_ledger_voucher(rows, model_class, engine):
     if not rows:
         logger.warning(f"No rows to upsert for {model_class.__tablename__}")
@@ -378,7 +366,6 @@ def _upsert_ledger_voucher(rows, model_class, engine):
         raise
     finally:
         db.close()
-
 
 def upsert_sales_vouchers(rows, engine):
     i, u, unch, s, d = _upsert_inventory_voucher(rows, SalesVoucher, engine)
@@ -411,7 +398,6 @@ def upsert_journal_vouchers(rows, engine):
 def upsert_contra_vouchers(rows, engine):
     i, u, unch, s, d = _upsert_ledger_voucher(rows, ContraVoucher, engine)
     _log_result("Contra vouchers upsert", i, u, unch, s, d)
-
 
 def upsert_trial_balance(rows, engine):
     if not rows:
@@ -474,7 +460,6 @@ def upsert_trial_balance(rows, engine):
     finally:
         db.close()
 
-
 INVENTORY_MODEL_MAP = {
     'sales'       : SalesVoucher,
     'purchase'    : PurchaseVoucher,
@@ -488,7 +473,6 @@ LEDGER_MODEL_MAP = {
     'journal' : JournalVoucher,
     'contra'  : ContraVoucher,
 }
-
 
 def company_import_db(data, engine):
     db = _get_session(engine)
@@ -553,7 +537,6 @@ def company_import_db(data, engine):
         raise
     finally:
         db.close()
-
 
 def upsert_ledgers(rows, engine):
     if not rows:

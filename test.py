@@ -6,21 +6,19 @@ COMPANY = "Freshnova Pvt Ltd (FCY)"
 TALLY_URL = "http://localhost:9000"
 
 def fetch_sales_vouchers(last_alter_id):
-
-    print("Requesting vouchers with ALTERID >", last_alter_id)
+    print(f"Requesting incremental data (ALTERID > {last_alter_id})...")
 
     from_date = "20000101"
     to_date = datetime.now().strftime("%Y%m%d")
 
-    xml_data = f"""<?xml version="1.0" encoding="UTF-8"?>
-<ENVELOPE>
+    # Define the XML with a Dynamic Collection and your specific columns
+    xml_data = f"""<ENVELOPE>
     <HEADER>
         <VERSION>1</VERSION>
         <TALLYREQUEST>Export</TALLYREQUEST>
-        <TYPE>Data</TYPE>
-        <ID>Voucher Register</ID>
+        <TYPE>Collection</TYPE>
+        <ID>IncrementalSalesVouchers</ID>
     </HEADER>
-
     <BODY>
         <DESC>
             <STATICVARIABLES>
@@ -28,54 +26,79 @@ def fetch_sales_vouchers(last_alter_id):
                 <SVCURRENTCOMPANY>{COMPANY}</SVCURRENTCOMPANY>
                 <SVFROMDATE>{from_date}</SVFROMDATE>
                 <SVTODATE>{to_date}</SVTODATE>
-
-                <!-- Sales Only -->
-                <VoucherTypeName>Sales</VoucherTypeName>
             </STATICVARIABLES>
+            <TDL>
+                <TDLMESSAGE>
+                    <COLLECTION NAME="IncrementalSalesVouchers">
+                        <TYPE>Voucher</TYPE>
+                        <CHILDREEOF>$$VchTypeSales</CHILDREEOF>
+                        <FILTER>AlterIdFilter</FILTER>
+                        
+                        <FETCH>GUID</FETCH>
+                        <FETCH>ALTERID</FETCH>
+                        <FETCH>MASTERID</FETCH>
+                        <FETCH>VOUCHERNUMBER</FETCH>
+                        <FETCH>VOUCHERTYPENAME</FETCH>
+                        <FETCH>DATE</FETCH>
+                        <FETCH>PARTYNAME</FETCH>
+                        <FETCH>REFERENCE</FETCH>
+                        <FETCH>NARRATION</FETCH>
+                        <FETCH>PARTYGSTIN</FETCH>
+                        <FETCH>IRNACKNO</FETCH>
+                        <FETCH>TEMPGSTEWAYBILLNUMBER</FETCH>
+                        <FETCH>ISDELETED</FETCH>
 
-            <FETCHLIST>
-                <FETCH>GUID</FETCH>
-                <FETCH>ALTERID</FETCH>
-                <FETCH>MASTERID</FETCH>
-                <FETCH>VOUCHERNUMBER</FETCH>
-                <FETCH>VOUCHERTYPENAME</FETCH>
-                <FETCH>DATE</FETCH>
-                <FETCH>PARTYNAME</FETCH>
-                <FETCH>NARRATION</FETCH>
-                <FETCH>ISDELETED</FETCH>
-            </FETCHLIST>
+                        <!-- Ledger Entry Fields -->
+                        <FETCH>ALLLEDGERENTRIES.LEDGERNAME</FETCH>
+                        <FETCH>ALLLEDGERENTRIES.AMOUNT</FETCH>
 
-            <FILTER>
-                $$AlterID &gt; {last_alter_id}
-            </FILTER>
+                        <!-- Inventory Entry Fields -->
+                        <FETCH>ALLINVENTORYENTRIES.STOCKITEMNAME</FETCH>
+                        <FETCH>ALLINVENTORYENTRIES.ACTUALQTY</FETCH>
+                        <FETCH>ALLINVENTORYENTRIES.BILLEDQTY</FETCH>
+                        <FETCH>ALLINVENTORYENTRIES.RATE</FETCH>
+                        <FETCH>ALLINVENTORYENTRIES.AMOUNT</FETCH>
+                        <FETCH>ALLINVENTORYENTRIES.DISCOUNT</FETCH>
 
+                        <!-- Batch Allocation Fields -->
+                        <FETCH>ALLINVENTORYENTRIES.BATCHALLOCATIONS.BATCHNAME</FETCH>
+                        <FETCH>ALLINVENTORYENTRIES.BATCHALLOCATIONS.MFDON</FETCH>
+                        <FETCH>ALLINVENTORYENTRIES.BATCHALLOCATIONS.EXPIRYPERIOD</FETCH>
+
+                        <!-- Accounting Allocation Fields -->
+                        <FETCH>ALLINVENTORYENTRIES.ACCOUNTINGALLOCATIONS.GSTHSNSACCODE</FETCH>
+                    </COLLECTION>
+                    <SYSTEM TYPE="Formulae" NAME="AlterIdFilter">
+                        $ALTERID > {last_alter_id}
+                    </SYSTEM>
+                </TDLMESSAGE>
+            </TDL>
         </DESC>
     </BODY>
-</ENVELOPE>
-"""
+</ENVELOPE>"""
 
     try:
         response = requests.post(
             TALLY_URL,
             data=xml_data,
             headers={"Content-Type": "text/xml"},
-            timeout=300
+            timeout=600  # Increased timeout for large nested data
         )
 
         response.raise_for_status()
 
         if "<LINEERROR>" in response.text:
-            print("Tally Error:")
-            print(response.text)
+            print("Tally Error detected in response.")
             return None
 
-        filename = f"sales_after_{last_alter_id}.xml"
+        # Save the file for debugging
+        filename = f"sales_sync_{datetime.now().strftime('%H%M%S')}.xml"
         with open(filename, "w", encoding="utf-8") as f:
             f.write(response.text)
 
-        print("Saved:", filename)
-
         root = ET.fromstring(response.text)
+        
+        # Look for ALTERID within the VOUCHER tags
         alter_ids = [
             int(node.text)
             for node in root.findall(".//ALTERID")
@@ -84,17 +107,17 @@ def fetch_sales_vouchers(last_alter_id):
 
         if alter_ids:
             new_max = max(alter_ids)
-            print("New Max ALTERID:", new_max)
+            print(f"Success! Fetched {len(alter_ids)} vouchers. New Max ALTERID: {new_max}")
             return new_max
         else:
-            print("No new vouchers found.")
+            print("No new/modified vouchers found.")
             return last_alter_id
 
     except Exception as e:
-        print("Error:", e)
+        print("Error during fetch:", e)
         return None
 
-
 if __name__ == "__main__":
-    last_id = 467
-    last_id = fetch_sales_vouchers(last_id)
+    # Ensure this matches your last successfully imported ID
+    current_last_id = 0
+    fetch_sales_vouchers(current_last_id)
