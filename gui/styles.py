@@ -185,6 +185,7 @@ NAV_ITEMS = [
     {"label": "Sync",       "icon": "🔄", "page": "sync"},
     {"label": "Scheduler",  "icon": "⏰", "page": "scheduler"},
     {"label": "Logs",       "icon": "📋", "page": "logs"},
+    {"label": "Settings",   "icon": "⚙️",  "page": "settings"},
 ]
 
 

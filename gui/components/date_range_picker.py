@@ -13,8 +13,17 @@ from datetime import datetime, date
 from gui.styles import Color, Font, Spacing
 
 try:
+    import ttkbootstrap  # noqa: F401
+    _HAS_TTKBOOTSTRAP = True
+except ImportError:
+    _HAS_TTKBOOTSTRAP = False
+
+try:
     from tkcalendar import DateEntry
-    HAS_CALENDAR = True
+    # tkcalendar's DateEntry is incompatible with ttkbootstrap — it crashes
+    # during __init__ because ttkbootstrap patches ttk.Entry.__init__ to call
+    # configure(style=...) before tkcalendar has set up the _calendar attribute.
+    HAS_CALENDAR = not _HAS_TTKBOOTSTRAP
 except ImportError:
     HAS_CALENDAR = False
 

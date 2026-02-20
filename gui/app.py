@@ -310,12 +310,14 @@ class TallySyncApp:
         from gui.pages.sync_page      import SyncPage
         from gui.pages.scheduler_page import SchedulerPage
         from gui.pages.logs_page      import LogsPage
+        from gui.pages.settings_page  import SettingsPage
 
         page_classes = {
             "home":      HomePage,
             "sync":      SyncPage,
             "scheduler": SchedulerPage,
             "logs":      LogsPage,
+            "settings":  SettingsPage,
         }
 
         for key, PageClass in page_classes.items():
@@ -346,6 +348,7 @@ class TallySyncApp:
             "sync":      "Sync",
             "scheduler": "Scheduler",
             "logs":      "Logs",
+            "settings":  "Settings",
         }
         self._header_title.configure(text=labels.get(page_key, ""))
 
