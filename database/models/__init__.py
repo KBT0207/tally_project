@@ -4,6 +4,7 @@ from .sync_state import SyncState
 from .ledger import Ledger
 from .inventory_voucher import SalesVoucher, PurchaseVoucher, CreditNote, DebitNote
 from .ledger_voucher import ReceiptVoucher, PaymentVoucher, JournalVoucher, ContraVoucher
+from .trial_balance import TrialBalance
 
 __all__ = [
     'Base',
@@ -18,4 +19,5 @@ __all__ = [
     'PaymentVoucher',
     'JournalVoucher',
     'ContraVoucher',
+    'TrialBalance',
 ]
