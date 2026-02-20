@@ -412,13 +412,80 @@ class HomePage(tk.Frame):
         if self.state.sync_active:
             messagebox.showwarning("Sync Running", "A sync is already in progress.")
             return
+
+        # Check if any selected company needs initial snapshot
+        needs_snapshot = [
+            n for n in self.state.selected_companies
+            if (co := self.state.get_company(n)) and not co.is_initial_done
+        ]
+
+        if needs_snapshot:
+            names = ", ".join(needs_snapshot[:3])
+            if len(needs_snapshot) > 3:
+                names += f" + {len(needs_snapshot)-3} more"
+            n_snap = len(needs_snapshot)
+            label  = "company has" if n_snap == 1 else "companies have"
+            msg    = (
+                f"{n_snap} selected {label} not completed an initial snapshot:\n\n"
+                f"{names}\n\n"
+                f"Run a full snapshot for all selected companies first?\n"
+                f"(Recommended — choose No to run incremental anyway)"
+            )
+            ans = messagebox.askyesno("Initial Snapshot Required", msg)
+            if ans:
+                from gui.state import SyncMode
+                # Use the earliest starting_from date among selected
+                dates = [
+                    co.starting_from for n in self.state.selected_companies
+                    if (co := self.state.get_company(n)) and co.starting_from
+                ]
+                self.state.sync_mode      = SyncMode.SNAPSHOT
+                self.state.sync_from_date = min(dates) if dates else None
+
         self.navigate("sync")
 
     def _on_single_sync(self, name: str):
+        """Called when ▶ Sync is clicked on a single company card."""
+        if self.state.sync_active:
+            messagebox.showwarning("Sync Running", "A sync is already in progress.")
+            return
+
+        co = self.state.get_company(name)
+        if not co:
+            return
+
         self.state.selected_companies = [name]
         for n, card in self._cards.items():
             card.set_selected(n == name)
         self._update_action_bar()
+
+        # ── Smart sync flow: check initial snapshot ───────
+        if not co.is_initial_done:
+            self._handle_initial_snapshot_flow(name)
+        else:
+            self.navigate("sync")
+
+    def _handle_initial_snapshot_flow(self, name: str):
+        """
+        Show InitialSnapshotDialog if is_initial_done is False.
+        User can choose full snapshot or skip to incremental.
+        """
+        from gui.components.initial_snapshot_dialog import InitialSnapshotDialog
+
+        co     = self.state.get_company(name)
+        dialog = InitialSnapshotDialog(self.winfo_toplevel(), co)
+        self.wait_window(dialog)
+
+        if dialog.result is None:
+            return  # cancelled
+
+        if dialog.result == "snapshot":
+            # Force snapshot mode on the state before navigating
+            from gui.state import SyncMode
+            self.state.sync_mode      = SyncMode.SNAPSHOT
+            self.state.sync_from_date = co.starting_from  # use configured start date
+        # else incremental — let sync_page decide
+
         self.navigate("sync")
 
     def _on_schedule_selected(self):

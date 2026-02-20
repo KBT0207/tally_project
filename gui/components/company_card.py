@@ -119,6 +119,25 @@ class CompanyCard(tk.Frame):
             sp.pack(side="left", padx=(Spacing.SM, 0))
             self._bg_frames.append(sp)
 
+        # Initial snapshot badge (configured companies only)
+        if is_configured:
+            if co.is_initial_done:
+                snap_badge = tk.Label(
+                    name_row, text="✓ Snapshot",
+                    font=Font.BADGE,
+                    bg=Color.SUCCESS_BG, fg=Color.SUCCESS_FG,
+                    padx=5, pady=1,
+                )
+            else:
+                snap_badge = tk.Label(
+                    name_row, text="⚠ No Snapshot",
+                    font=Font.BADGE,
+                    bg=Color.WARNING_BG, fg=Color.WARNING_FG,
+                    padx=5, pady=1,
+                )
+            snap_badge.pack(side="left", padx=(Spacing.SM, 0))
+            self._bg_frames.append(snap_badge)
+
         # ── Meta row ─────────────────────────────────────
         meta = tk.Frame(outer, bg=Color.BG_CARD)
         meta.grid(row=1, column=1, sticky="ew", pady=(2, 0))

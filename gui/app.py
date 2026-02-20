@@ -55,6 +55,10 @@ class TallySyncApp:
         self._build_header()
         self._build_content_area()
         self._load_pages()
+        # Listen for sync_finished to detect post-snapshot completion
+        self.state.on("sync_finished", self._on_sync_finished_app)
+        self._snapshot_celebrated: set = set()
+
         self._start_startup_sequence()
         self._poll_queue()                    # start queue polling loop
 
@@ -757,6 +761,46 @@ class TallySyncApp:
     # ─────────────────────────────────────────────────────────────────────────
     #  Shutdown
     # ─────────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    #  Post-snapshot detection — show schedule prompt after first full sync
+    # ─────────────────────────────────────────────────────────────────────────
+    def _on_sync_finished_app(self):
+        """Called via state event after any sync finishes (on main thread via emit)."""
+        self._check_post_snapshot_companies()
+
+    def _check_post_snapshot_companies(self):
+        """
+        After any sync completes, check if any company just had its initial
+        snapshot finish (is_initial_done True + last_sync_time just set).
+        If so, show PostSnapshotDialog offering to set up a schedule.
+        Only shown once per company (tracked via _snapshot_celebrated set).
+        """
+        if not hasattr(self, "_snapshot_celebrated"):
+            self._snapshot_celebrated: set = set()
+
+        newly_done = [
+            co for co in self.state.companies.values()
+            if co.is_initial_done
+            and co.name not in self._snapshot_celebrated
+            and co.last_sync_time is not None
+        ]
+
+        for co in newly_done:
+            self._snapshot_celebrated.add(co.name)
+            self._show_post_snapshot_dialog(co)
+
+    def _show_post_snapshot_dialog(self, co):
+        """Show PostSnapshotDialog for a company and handle result."""
+        from gui.components.initial_snapshot_dialog import PostSnapshotDialog
+
+        dialog = PostSnapshotDialog(self.root, co)
+        self.root.wait_window(dialog)
+
+        if dialog.result == "schedule":
+            # Navigate to scheduler page with this company pre-selected
+            self.state.selected_companies = [co.name]
+            self.navigate("scheduler")
+
     def _on_close(self):
         if self.state.sync_active:
             if not messagebox.askyesno(

@@ -279,65 +279,69 @@ class SettingsPage(tk.Frame):
     def _build_db_section(self, parent, row: int):
         card = self._make_card(parent, row=row, title="🗄️  Database Connection  (MySQL / MariaDB)")
 
-        # Read current DB config from file for display
+        # ── Load current values from .env / state ─────────
         db_cfg = self._read_db_config()
 
-        fields = [
-            ("Host",      db_cfg.get("host",     "localhost")),
-            ("Port",      db_cfg.get("port",     "3306")),
-            ("Username",  db_cfg.get("username", "root")),
-            ("Password",  "●●●●●●●●"),
-            ("Database",  db_cfg.get("database", "tally_sync")),
+        # StringVars for all DB fields — editable when unlocked
+        self._var("db_host",     db_cfg.get("host",     "localhost"))
+        self._var("db_port",     db_cfg.get("port",     "3306"))
+        self._var("db_username", db_cfg.get("username", "root"))
+        self._var("db_password", db_cfg.get("password", ""))
+        self._var("db_database", db_cfg.get("database", ""))
+
+        # Set initial values from config
+        self._vars["db_host"].set(db_cfg.get("host",     "localhost"))
+        self._vars["db_port"].set(db_cfg.get("port",     "3306"))
+        self._vars["db_username"].set(db_cfg.get("username", "root"))
+        self._vars["db_password"].set(db_cfg.get("password", ""))
+        self._vars["db_database"].set(db_cfg.get("database", ""))
+
+        # ── Field rows ────────────────────────────────────
+        self._db_entries = {}  # key → Entry widget
+
+        field_defs = [
+            ("Host",     "db_host",     False, "hostname or IP"),
+            ("Port",     "db_port",     False, "default 3306"),
+            ("Username", "db_username", False, ""),
+            ("Password", "db_password", True,  ""),
+            ("Database", "db_database", False, "DB_NAME from .env"),
         ]
 
-        for i, (lbl, val) in enumerate(fields, start=1):
-            is_pw = (lbl == "Password")
+        for i, (lbl, key, is_secret, hint) in enumerate(field_defs, start=1):
             tk.Label(
                 card, text=lbl,
                 font=Font.BODY, bg=Color.BG_CARD, fg=Color.TEXT_SECONDARY,
                 anchor="w", width=22,
             ).grid(row=i, column=0, sticky="w", pady=4)
 
-            tk.Entry(
-                card,
-                font=Font.BODY, width=24,
-                bg=Color.BG_TABLE_HEADER,
-                fg=Color.TEXT_MUTED if is_pw else Color.TEXT_PRIMARY,
-                relief="solid", bd=1,
-                state="readonly",
-            ).grid(row=i, column=1, sticky="w", pady=4, padx=(Spacing.SM, 0))
-
-            # Insert value manually since entry is readonly
-            # (we use a fresh Entry per field so we can insert)
-
-        # Show values properly with readonly entries
-        card.grid_slaves()  # refresh
-
-        # Re-build properly with insertable values
-        for w in card.winfo_children():
-            if isinstance(w, tk.Entry):
-                w.destroy()
-
-        for i, (lbl, val) in enumerate(fields, start=1):
-            is_pw = (lbl == "Password")
             e = tk.Entry(
                 card,
+                textvariable=self._vars[key],
                 font=Font.BODY, width=26,
                 bg=Color.BG_TABLE_HEADER,
-                fg=Color.TEXT_MUTED if is_pw else Color.TEXT_PRIMARY,
+                fg=Color.TEXT_PRIMARY,
                 relief="solid", bd=1,
+                show="●" if is_secret else "",
+                state="readonly",
             )
-            e.insert(0, val)
-            e.configure(state="readonly")
             e.grid(row=i, column=1, sticky="w", pady=4, padx=(Spacing.SM, 0))
+            self._db_entries[key] = e
 
-        # Pool settings
+            if hint:
+                tk.Label(
+                    card, text=hint,
+                    font=Font.BODY_SM, bg=Color.BG_CARD, fg=Color.TEXT_MUTED,
+                ).grid(row=i, column=2, sticky="w", padx=(Spacing.SM, 0))
+
+        self._db_editing = False  # track edit mode
+
+        # ── Pool settings ─────────────────────────────────
         sep = tk.Frame(card, bg=Color.BORDER, height=1)
-        sep.grid(row=len(fields)+1, column=0, columnspan=3, sticky="ew",
+        sep.grid(row=len(field_defs)+1, column=0, columnspan=3, sticky="ew",
                  pady=(Spacing.MD, Spacing.SM))
 
         pool_row = tk.Frame(card, bg=Color.BG_CARD)
-        pool_row.grid(row=len(fields)+2, column=0, columnspan=3, sticky="w")
+        pool_row.grid(row=len(field_defs)+2, column=0, columnspan=3, sticky="w")
 
         self._var("db_pool_size",    "10")
         self._var("db_pool_recycle", "3600")
@@ -358,17 +362,18 @@ class SettingsPage(tk.Frame):
                  bg=Color.BG_INPUT, fg=Color.TEXT_PRIMARY,
                  relief="solid", bd=1).pack(side="left", padx=(Spacing.SM, 0))
 
-        # Edit DB button
+        # ── Action buttons ────────────────────────────────
         btn_row = tk.Frame(card, bg=Color.BG_CARD)
-        btn_row.grid(row=len(fields)+3, column=0, columnspan=3, sticky="w",
+        btn_row.grid(row=len(field_defs)+3, column=0, columnspan=3, sticky="w",
                      pady=(Spacing.MD, 0))
 
-        tk.Button(
-            btn_row, text="✎  Edit Database Credentials",
+        self._db_edit_btn = tk.Button(
+            btn_row, text="✎  Edit Credentials",
             font=Font.BUTTON_SM, bg=Color.BG_ROOT, fg=Color.TEXT_PRIMARY,
             relief="solid", bd=1, padx=Spacing.LG, pady=5,
-            cursor="hand2", command=self._edit_db,
-        ).pack(side="left", padx=(0, Spacing.SM))
+            cursor="hand2", command=self._toggle_db_edit,
+        )
+        self._db_edit_btn.pack(side="left", padx=(0, Spacing.SM))
 
         self._db_test_btn = tk.Button(
             btn_row, text="⚡  Test DB Connection",
@@ -376,13 +381,23 @@ class SettingsPage(tk.Frame):
             relief="flat", bd=0, padx=Spacing.LG, pady=5,
             cursor="hand2", command=self._test_db,
         )
-        self._db_test_btn.pack(side="left")
+        self._db_test_btn.pack(side="left", padx=(0, Spacing.SM))
+
+        self._db_apply_btn = tk.Button(
+            btn_row, text="✔  Apply & Reconnect",
+            font=Font.BUTTON_SM, bg=Color.PRIMARY, fg=Color.TEXT_WHITE,
+            relief="flat", bd=0, padx=Spacing.LG, pady=5,
+            cursor="hand2", command=self._apply_db_changes,
+        )
+        # Hidden until in edit mode
+        self._db_apply_btn.pack(side="left", padx=(0, Spacing.SM))
+        self._db_apply_btn.pack_forget()
 
         self._db_status_lbl = tk.Label(
             btn_row, text="",
             font=Font.BODY_SM, bg=Color.BG_CARD, fg=Color.TEXT_MUTED,
         )
-        self._db_status_lbl.pack(side="left", padx=(Spacing.LG, 0))
+        self._db_status_lbl.pack(side="left", padx=(Spacing.SM, 0))
 
     # ─────────────────────────────────────────────────────────────────────────
     #  Section 3 — Sync Defaults
@@ -636,21 +651,179 @@ class SettingsPage(tk.Frame):
     # ─────────────────────────────────────────────────────────────────────────
     #  Test DB Connection
     # ─────────────────────────────────────────────────────────────────────────
-    def _test_db(self):
-        self._db_test_btn.configure(state="disabled", text="Testing...")
-        self._db_status_lbl.configure(text="Connecting...", fg=Color.TEXT_MUTED)
+    def _get_live_db_cfg(self) -> dict:
+        """Return DB config from the currently displayed (possibly edited) fields."""
+        return {
+            "host":     self._vars["db_host"].get().strip(),
+            "port":     self._vars["db_port"].get().strip(),
+            "username": self._vars["db_username"].get().strip(),
+            "password": self._vars["db_password"].get(),
+            "database": self._vars["db_database"].get().strip(),
+        }
+
+    def _toggle_db_edit(self):
+        """Toggle between view-only and edit mode for DB credential fields."""
+        self._db_editing = not self._db_editing
+
+        new_state = "normal" if self._db_editing else "readonly"
+        active_bg = Color.BG_INPUT if self._db_editing else Color.BG_TABLE_HEADER
+
+        for key, entry in self._db_entries.items():
+            entry.configure(state=new_state, bg=active_bg)
+
+        if self._db_editing:
+            self._db_edit_btn.configure(
+                text="✖  Cancel Edit",
+                bg=Color.DANGER_BG if hasattr(Color, "DANGER_BG") else "#fde8e8",
+                fg=Color.DANGER if hasattr(Color, "DANGER") else "#c0392b",
+                relief="flat",
+            )
+            self._db_apply_btn.pack(side="left", padx=(0, Spacing.SM))
+            self._db_status_lbl.configure(
+                text="Edit credentials, then Test or Apply & Reconnect.",
+                fg=Color.TEXT_MUTED,
+            )
+            # Focus host field
+            self._db_entries["db_host"].focus_set()
+        else:
+            # Revert fields to last saved state
+            db_cfg = self._read_db_config()
+            self._vars["db_host"].set(db_cfg.get("host",     "localhost"))
+            self._vars["db_port"].set(db_cfg.get("port",     "3306"))
+            self._vars["db_username"].set(db_cfg.get("username", "root"))
+            self._vars["db_password"].set(db_cfg.get("password", ""))
+            self._vars["db_database"].set(db_cfg.get("database", ""))
+            self._db_edit_btn.configure(
+                text="✎  Edit Credentials",
+                bg=Color.BG_ROOT, fg=Color.TEXT_PRIMARY, relief="solid",
+            )
+            self._db_apply_btn.pack_forget()
+            self._db_status_lbl.configure(text="", fg=Color.TEXT_MUTED)
+
+    def _apply_db_changes(self):
+        """
+        Test the new credentials, write to .env, reconnect the live engine,
+        then exit edit mode.
+        """
+        cfg = self._get_live_db_cfg()
+
+        # Basic validation
+        if not cfg["database"]:
+            messagebox.showerror("Validation Error", "Database name (DB_NAME) cannot be empty.")
+            return
+        if not cfg["port"].isdigit():
+            messagebox.showerror("Validation Error", "Port must be a number.")
+            return
+
+        self._db_apply_btn.configure(state="disabled", text="Applying...")
+        self._db_status_lbl.configure(text="Testing connection...", fg=Color.TEXT_MUTED)
         self.update_idletasks()
 
         def worker():
             try:
                 from database.db_connector import DatabaseConnector
-                cfg = self._read_db_config()
+                conn = DatabaseConnector(
+                    username = cfg["username"],
+                    password = cfg["password"],
+                    host     = cfg["host"],
+                    port     = int(cfg["port"]),
+                    database = cfg["database"],
+                )
+                ok = conn.test_connection()
+                if not ok:
+                    raise RuntimeError("Connection test returned False")
+
+                # Write back to .env
+                self._write_env(cfg)
+
+                # Update live state so rest of app uses new credentials
+                self.state.db_config = cfg
+
+                # Rebuild engine
+                from database.db_connector import DatabaseConnector
+                from database.models.scheduler_config import Base as SchedBase
+                connector = DatabaseConnector(
+                    username = cfg["username"],
+                    password = cfg["password"],
+                    host     = cfg["host"],
+                    port     = int(cfg["port"]),
+                    database = cfg["database"],
+                )
+                connector.create_database_if_not_exists()
+                connector.create_tables()
+                new_engine = connector.get_engine()
+                SchedBase.metadata.create_all(new_engine, checkfirst=True)
+                self.state.db_engine = new_engine
+
+                self.after(0, lambda: self._on_apply_success())
+            except Exception as e:
+                self.after(0, lambda err=str(e): self._on_apply_failure(err))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_apply_success(self):
+        self._db_apply_btn.configure(state="normal", text="✔  Apply & Reconnect")
+        self._db_status_lbl.configure(text="✓  Reconnected successfully", fg=Color.SUCCESS)
+        # Exit edit mode cleanly (don't revert fields — keep new values)
+        self._db_editing = False
+        for entry in self._db_entries.values():
+            entry.configure(state="readonly", bg=Color.BG_TABLE_HEADER)
+        self._db_edit_btn.configure(
+            text="✎  Edit Credentials",
+            bg=Color.BG_ROOT, fg=Color.TEXT_PRIMARY, relief="solid",
+        )
+        self._db_apply_btn.pack_forget()
+        # Refresh header DB status label
+        self.app._db_status_lbl.configure(text="● DB: Connected", fg=Color.SUCCESS)
+
+    def _on_apply_failure(self, err: str):
+        self._db_apply_btn.configure(state="normal", text="✔  Apply & Reconnect")
+        self._db_status_lbl.configure(
+            text=f"✗  {err[:80]}", fg=Color.DANGER,
+        )
+
+    @staticmethod
+    def _write_env(cfg: dict):
+        """Overwrite .env with new DB credentials. Preserves non-DB lines."""
+        env_path = ".env"
+        import re
+        db_keys = {"DB_HOST", "DB_PORT", "DB_USERNAME", "DB_PASSWORD", "DB_NAME"}
+        existing_lines = []
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    key = line.split("=")[0].strip().upper()
+                    if key not in db_keys:
+                        existing_lines.append(line.rstrip())
+
+        db_lines = [
+            f"DB_HOST={cfg['host']}",
+            f"DB_PORT={cfg['port']}",
+            f"DB_USERNAME={cfg['username']}",
+            f"DB_PASSWORD={cfg['password']}",
+            f"DB_NAME={cfg['database']}",
+        ]
+        all_lines = existing_lines + db_lines
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(all_lines) + "\n")
+
+    def _test_db(self):
+        """Test using whatever is currently in the fields (live or edited)."""
+        self._db_test_btn.configure(state="disabled", text="Testing...")
+        self._db_status_lbl.configure(text="Connecting...", fg=Color.TEXT_MUTED)
+        self.update_idletasks()
+
+        cfg = self._get_live_db_cfg()
+
+        def worker():
+            try:
+                from database.db_connector import DatabaseConnector
                 conn = DatabaseConnector(
                     username = cfg.get("username", "root"),
                     password = cfg.get("password", ""),
                     host     = cfg.get("host",     "localhost"),
                     port     = int(cfg.get("port", 3306)),
-                    database = cfg.get("database", "tally_sync"),
+                    database = cfg.get("database", ""),
                 )
                 ok = conn.test_connection()
                 self.after(0, lambda: self._on_db_test_result(ok))
@@ -667,10 +840,6 @@ class SettingsPage(tk.Frame):
             self._db_status_lbl.configure(
                 text=f"✗  {err or 'Connection failed'}", fg=Color.DANGER,
             )
-
-    def _edit_db(self):
-        """Open the DB config dialog from app.py."""
-        self.app.open_db_settings()
 
     # ─────────────────────────────────────────────────────────────────────────
     #  Save
@@ -826,20 +995,43 @@ class SettingsPage(tk.Frame):
     # ─────────────────────────────────────────────────────────────────────────
     #  Helpers
     # ─────────────────────────────────────────────────────────────────────────
-    @staticmethod
-    def _read_db_config() -> dict:
-        cfg = configparser.ConfigParser()
-        if os.path.exists("db_config.ini"):
-            cfg.read("db_config.ini")
-            if "database" in cfg:
-                return dict(cfg["database"])
-        return {}
+    def _read_db_config(self) -> dict:
+        """
+        Read DB config from .env file (same logic as app._load_db_config).
+        Falls back to state.db_config (already loaded at startup) if .env missing.
+        Always returns the most up-to-date values including any live edits.
+        """
+        # Prefer live state.db_config (loaded at startup, always authoritative)
+        live = getattr(self.state, 'db_config', None)
+        if live:
+            return dict(live)
+
+        # Fallback: parse .env directly
+        env: dict[str, str] = {}
+        for path in (".env", os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")):
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        key, _, val = line.partition("=")
+                        env[key.strip().upper()] = val.strip().strip("'\"")
+                break
+
+        return {
+            "host":     env.get("DB_HOST",     "localhost"),
+            "port":     env.get("DB_PORT",     "3306"),
+            "username": env.get("DB_USERNAME", "root"),
+            "password": env.get("DB_PASSWORD", ""),
+            "database": env.get("DB_NAME",     ""),
+        }
 
     # ─────────────────────────────────────────────────────────────────────────
     #  Lifecycle
     # ─────────────────────────────────────────────────────────────────────────
     def on_show(self):
-        """Called every time page is navigated to — reload config from file."""
+        """Called every time page is navigated to — reload config from file/state."""
         self._cfg = load_tally_config()
         for k, var in self._vars.items():
             if k in self._cfg:
@@ -848,3 +1040,17 @@ class SettingsPage(tk.Frame):
         # Sync tally host/port from live state
         self._vars["tally_host"].set(self.state.tally.host)
         self._vars["tally_port"].set(str(self.state.tally.port))
+
+        # Reload DB fields from .env / live state (not db_config.ini)
+        db_cfg = self._read_db_config()
+        self._vars["db_host"].set(db_cfg.get("host",     "localhost"))
+        self._vars["db_port"].set(db_cfg.get("port",     "3306"))
+        self._vars["db_username"].set(db_cfg.get("username", "root"))
+        self._vars["db_password"].set(db_cfg.get("password", ""))
+        self._vars["db_database"].set(db_cfg.get("database", ""))
+
+        # Ensure fields are readonly (in case we navigated away mid-edit)
+        if not self._db_editing:
+            for entry in self._db_entries.values():
+                entry.configure(state="readonly", bg=Color.BG_TABLE_HEADER)
+        self._db_status_lbl.configure(text="")
