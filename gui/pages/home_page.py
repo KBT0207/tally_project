@@ -2,14 +2,16 @@
 gui/pages/home_page.py
 =======================
 Home page — full company list with:
+  - ALL companies from Tally shown on first open (even not-yet-configured)
   - Configured companies (from DB) with status, last sync, alter_id
-  - Not-configured companies (in Tally but not in DB)
+  - Not-configured companies (Tally-only) with a Configure button
+  - Tally open/offline indicator per card
   - Checkboxes for single / multi-select
   - Per-card Sync button (quick single company sync)
   - Bulk action bar: Sync Selected, Schedule Selected
   - Select All / Deselect All
   - Search/filter bar
-  - Refresh button (re-queries DB)
+  - Refresh button (re-queries DB + Tally)
   - Live progress bar per card during sync
   - Status auto-refreshes via AppState event system
 """
@@ -76,6 +78,17 @@ class HomePage(tk.Frame):
             relief="solid", bd=1, width=22,
         ).pack(side="left")
 
+        # Filter toggle: show all / configured only
+        self._show_all_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            right, text="Show unconfigured",
+            variable=self._show_all_var,
+            font=Font.BODY_SM,
+            bg=Color.BG_ROOT, activebackground=Color.BG_ROOT,
+            fg=Color.TEXT_SECONDARY,
+            command=lambda: self._render_cards(self._filter_var.get().strip()),
+        ).pack(side="left", padx=(Spacing.MD, 2))
+
         # Select All / Clear
         for label, cmd in [("Select All", self._select_all), ("Clear", self._deselect_all)]:
             tk.Button(
@@ -95,7 +108,6 @@ class HomePage(tk.Frame):
         self._refresh_btn.pack(side="left", padx=(Spacing.MD, 0))
 
     def _build_list_area(self):
-        # Outer card container
         container = tk.Frame(
             self, bg=Color.BG_CARD, relief="flat",
             highlightthickness=1, highlightbackground=Color.BORDER,
@@ -112,11 +124,11 @@ class HomePage(tk.Frame):
         hdr.grid(row=0, column=0, columnspan=2, sticky="ew")
 
         for col, (text, w) in enumerate([
-            ("",              3),
-            ("Company Name", 34),
-            ("Status",       14),
-            ("Sync Progress",14),
-            ("Actions",      10),
+            ("",               3),
+            ("Company Name",  34),
+            ("Status",        14),
+            ("Sync Progress", 14),
+            ("Actions",       10),
         ]):
             tk.Label(
                 hdr, text=text, font=Font.BODY_SM_BOLD,
@@ -196,7 +208,7 @@ class HomePage(tk.Frame):
     #  Render cards
     # ─────────────────────────────────────────────────────────────────────────
     def refresh_companies(self):
-        """Called by app.py after DB load completes."""
+        """Called by app.py after DB + Tally load completes."""
         self._render_cards()
         self._update_summary()
 
@@ -207,13 +219,23 @@ class HomePage(tk.Frame):
 
         companies = list(self.state.companies.values())
 
+        # Filter by search text
         if filter_text:
             ft = filter_text.lower()
             companies = [c for c in companies if ft in c.name.lower()]
 
+        # Optionally hide unconfigured
+        if not self._show_all_var.get():
+            companies = [c for c in companies
+                         if c.status != CompanyStatus.NOT_CONFIGURED]
+
         if not companies:
-            msg = "No companies match your search." if filter_text else \
-                  "No companies found.\nClick ⟳ Refresh to load from database."
+            if filter_text:
+                msg = "No companies match your search."
+            elif not self._show_all_var.get():
+                msg = "No configured companies.\nClick ⟳ Refresh to load, or show unconfigured companies."
+            else:
+                msg = "No companies found.\nMake sure Tally is running, then click ⟳ Refresh."
             tk.Label(
                 self._list_frame, text=msg,
                 font=Font.BODY, bg=Color.BG_CARD, fg=Color.TEXT_MUTED,
@@ -221,29 +243,83 @@ class HomePage(tk.Frame):
             ).pack(fill="both", expand=True)
             return
 
-        # Sort: configured first, then alphabetical
+        # Sort: configured first (alphabetical within each group)
         companies.sort(key=lambda c: (
             0 if c.status != CompanyStatus.NOT_CONFIGURED else 1,
             c.name.lower(),
         ))
 
+        # Section headers
+        shown_configured    = False
+        shown_unconfigured  = False
+
         for i, co in enumerate(companies):
+            is_configured = (co.status != CompanyStatus.NOT_CONFIGURED)
+
+            # Section divider labels
+            if is_configured and not shown_configured:
+                self._add_section_header("✓  Configured Companies", Color.SUCCESS_FG)
+                shown_configured = True
+            elif not is_configured and not shown_unconfigured:
+                if shown_configured:
+                    tk.Frame(self._list_frame, bg=Color.BORDER, height=1).pack(
+                        fill="x", pady=(4, 0)
+                    )
+                self._add_section_header(
+                    "○  Not Yet Configured  —  open in Tally, not saved to DB",
+                    Color.WARNING_FG,
+                )
+                shown_unconfigured = True
+
             card = CompanyCard(
-                parent      = self._list_frame,
-                company     = co,
-                on_select   = self._on_card_select,
-                on_sync     = self._on_single_sync,
-                on_schedule = self._on_single_schedule,
-                selected    = co.name in self.state.selected_companies,
+                parent       = self._list_frame,
+                company      = co,
+                on_select    = self._on_card_select,
+                on_sync      = self._on_single_sync,
+                on_schedule  = self._on_single_schedule,
+                on_configure = self._on_configure_company,
+                selected     = co.name in self.state.selected_companies,
             )
-            # Alternating row color
             bg = Color.BG_TABLE_ODD if i % 2 == 0 else Color.BG_TABLE_EVEN
             card.configure(bg=bg)
             card.pack(fill="x")
             self._cards[co.name] = card
 
-            # Divider
             tk.Frame(self._list_frame, bg=Color.BORDER_LIGHT, height=1).pack(fill="x")
+
+    def _add_section_header(self, text: str, fg: str):
+        """Insert a subtle section label between groups."""
+        f = tk.Frame(self._list_frame, bg=Color.BG_TABLE_HEADER)
+        f.pack(fill="x")
+        tk.Label(
+            f, text=text,
+            font=Font.BODY_SM_BOLD,
+            bg=Color.BG_TABLE_HEADER, fg=fg,
+            padx=Spacing.LG, pady=5, anchor="w",
+        ).pack(fill="x")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    #  Configure company (NOT_CONFIGURED → dialog → save DB → refresh card)
+    # ─────────────────────────────────────────────────────────────────────────
+    def _on_configure_company(self, name: str):
+        co = self.state.get_company(name)
+        if not co:
+            return
+
+        from gui.components.configure_company_dialog import ConfigureCompanyDialog
+
+        dialog = ConfigureCompanyDialog(
+            parent  = self.winfo_toplevel(),
+            company = co,
+            app     = self.app,
+            state   = self.state,
+        )
+        self.wait_window(dialog)
+
+        if dialog.saved:
+            # Re-render the list so the card changes to Configured view
+            self._render_cards(filter_text=self._filter_var.get().strip())
+            self._update_summary()
 
     # ─────────────────────────────────────────────────────────────────────────
     #  Selection
@@ -258,9 +334,14 @@ class HomePage(tk.Frame):
         self._update_action_bar()
 
     def _select_all(self):
-        self.state.selected_companies = list(self.state.companies.keys())
-        for card in self._cards.values():
-            card.set_selected(True)
+        # Only select configured companies for sync
+        self.state.selected_companies = [
+            n for n, c in self.state.companies.items()
+            if c.status != CompanyStatus.NOT_CONFIGURED
+        ]
+        for name, card in self._cards.items():
+            co = self.state.companies.get(name)
+            card.set_selected(bool(co and co.status != CompanyStatus.NOT_CONFIGURED))
         self._update_action_bar()
 
     def _deselect_all(self):
@@ -282,13 +363,25 @@ class HomePage(tk.Frame):
             self._sched_sel_btn.configure(state="normal")
 
     def _update_summary(self):
-        total      = len(self.state.companies)
-        configured = len(self.state.configured_companies())
-        syncing    = sum(
+        total        = len(self.state.companies)
+        configured   = len(self.state.configured_companies())
+        unconfigured = total - configured
+        tally_open   = sum(
+            1 for c in self.state.companies.values()
+            if getattr(c, 'tally_open', False)
+        )
+        syncing = sum(
             1 for c in self.state.companies.values()
             if c.status == CompanyStatus.SYNCING
         )
-        parts = [f"{total} total", f"{configured} configured"]
+        parts = [
+            f"{total} total",
+            f"{configured} configured",
+        ]
+        if unconfigured:
+            parts.append(f"{unconfigured} not configured")
+        if tally_open:
+            parts.append(f"{tally_open} open in Tally")
         if syncing:
             parts.append(f"{syncing} syncing")
         self._summary_lbl.configure(text="  ·  ".join(parts))
@@ -348,7 +441,7 @@ class HomePage(tk.Frame):
         self._render_cards(filter_text=self._filter_var.get().strip())
 
     # ─────────────────────────────────────────────────────────────────────────
-    #  AppState event callbacks  (always use .after(0) for thread safety)
+    #  AppState event callbacks  (always .after(0) for thread safety)
     # ─────────────────────────────────────────────────────────────────────────
     def _on_company_updated(self, name: str, company: CompanyState):
         def _do():

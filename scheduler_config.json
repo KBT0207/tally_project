@@ -1,0 +1,8 @@
+{
+  "Freshnova Pvt Ltd (FCY)": {
+    "enabled": true,
+    "interval": "minutes",
+    "value": 1,
+    "time": "09:00"
+  }
+}

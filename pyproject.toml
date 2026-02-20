@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "apscheduler>=3.11.2",
     "cryptography>=46.0.5",
     "customtkinter>=5.2.2",
     "defusedxml>=0.7.1",

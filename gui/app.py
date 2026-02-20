@@ -363,51 +363,79 @@ class TallySyncApp:
     # ─────────────────────────────────────────────────────────────────────────
     #  DB config — load from file or prompt user
     # ─────────────────────────────────────────────────────────────────────────
-    _DB_CONFIG_FILE = "db_config.ini"   # saved next to run_gui.py
+    _ENV_FILE = ".env"   # sits next to run_gui.py
 
     def _load_db_config(self) -> dict:
         """
-        Load DB credentials from db_config.ini.
-        If file doesn't exist or is incomplete, show a dialog to collect them.
-        Returns dict with keys: host, port, username, password, database
+        Load DB credentials exclusively from .env file.
+
+        Expected keys (case-insensitive):
+            DB_USERNAME   — MySQL username
+            DB_PASSWORD   — MySQL password
+            DB_HOST       — host (default: localhost)
+            DB_PORT       — port (default: 3306)
+            DB_NAME       — database name
+
+        Raises RuntimeError with a clear message if the file is missing
+        or any required key is absent, which the startup worker will
+        catch and display as an error dialog.
         """
-        import configparser, os
+        import os
 
-        cfg = configparser.ConfigParser()
-        defaults = {
-            "host":     "localhost",
-            "port":     "3306",
-            "username": "root",
-            "password": "",
-            "database": "tally_sync",
+        env_path = self._ENV_FILE
+
+        # ── Locate .env ───────────────────────────────────
+        if not os.path.exists(env_path):
+            # Also check one directory up (in case run from a sub-folder)
+            alt = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+            if os.path.exists(alt):
+                env_path = alt
+            else:
+                raise RuntimeError(
+                    f".env file not found.\n\n"
+                    f"Please create a file named  .env  next to run_gui.py  with:\n\n"
+                    f"  DB_USERNAME=root\n"
+                    f"  DB_PASSWORD=yourpassword\n"
+                    f"  DB_HOST=localhost\n"
+                    f"  DB_PORT=3306\n"
+                    f"  DB_NAME=tally_db"
+                )
+
+        # ── Parse .env (simple key=value, ignore comments/blanks) ─
+        env: dict[str, str] = {}
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                # Strip optional surrounding quotes  'val'  or  "val"
+                key = key.strip().upper()
+                val = val.strip().strip("'\"")
+                env[key] = val
+
+        # ── Validate required keys ────────────────────────
+        missing = [k for k in ("DB_USERNAME", "DB_NAME") if not env.get(k)]
+        if missing:
+            raise RuntimeError(
+                f"Missing required keys in .env: {', '.join(missing)}\n\n"
+                f"Your .env must contain at minimum:\n"
+                f"  DB_USERNAME=root\n"
+                f"  DB_PASSWORD=yourpassword\n"
+                f"  DB_HOST=localhost\n"
+                f"  DB_PORT=3306\n"
+                f"  DB_NAME=tally_db"
+            )
+
+        return {
+            "username": env.get("DB_USERNAME", "root"),
+            "password": env.get("DB_PASSWORD", ""),
+            "host":     env.get("DB_HOST",     "localhost"),
+            "port":     env.get("DB_PORT",     "3306"),
+            "database": env.get("DB_NAME",     "tally_db"),
         }
-
-        if os.path.exists(self._DB_CONFIG_FILE):
-            cfg.read(self._DB_CONFIG_FILE)
-            if "database" in cfg:
-                loaded = dict(cfg["database"])
-                # Merge with defaults for any missing keys
-                for k, v in defaults.items():
-                    loaded.setdefault(k, v)
-                return loaded
-
-        # No config file — show dialog on main thread and wait
-        result = {}
-        event  = threading.Event()
-
-        def show_dialog():
-            dialog = DBConfigDialog(self.root, defaults)
-            self.root.wait_window(dialog)
-            result.update(dialog.result or defaults)
-            # Save to file
-            cfg["database"] = result
-            with open(self._DB_CONFIG_FILE, "w") as f:
-                cfg.write(f)
-            event.set()
-
-        self.root.after(0, show_dialog)
-        event.wait()   # block background thread until user submits
-        return result
 
     @staticmethod
     def _create_engine(cfg: dict):
@@ -469,23 +497,26 @@ class TallySyncApp:
 
     def _load_companies_from_db(self, engine):
         """
-        Read companies from the DB companies table and populate state.companies.
-        Also detect companies that exist in Tally but are not in DB (not configured).
+        Read companies from DB and merge with live Tally company list.
+
+        Strategy:
+          - DB companies  → always shown as Configured (or Sync Done etc.)
+          - Tally-only    → shown as Not Configured, with a Configure button
+          - DB-only       → shown as Configured but flagged tally_open=False
+          - Both          → Configured, tally_open=True
         """
         from sqlalchemy.orm import sessionmaker
-        from database.models.company  import Company
+        from database.models.company    import Company
         from database.models.sync_state import SyncState
 
+        # ── Step 1: Load DB companies ─────────────────────
         Session = sessionmaker(bind=engine)
-        db = Session()
+        db      = Session()
         try:
-            db_companies = db.query(Company).all()
+            db_companies = {co.name: co for co in db.query(Company).all()}
 
-            for co in db_companies:
-                # Get latest sync_state across all voucher types for this company
-                states = db.query(SyncState).filter_by(
-                    company_name=co.name
-                ).all()
+            for name, co in db_companies.items():
+                states = db.query(SyncState).filter_by(company_name=name).all()
 
                 last_sync  = None
                 last_alter = 0
@@ -501,28 +532,119 @@ class TallySyncApp:
                     months     = [s.last_synced_month for s in states if s.last_synced_month]
                     last_month = max(months) if months else None
 
-                # Determine status
-                if last_sync:
-                    status = CompanyStatus.CONFIGURED
-                else:
-                    status = CompanyStatus.CONFIGURED
-
-                from_str = None
+                from_str  = None
+                books_str = None
                 if co.starting_from:
-                    from_str = str(co.starting_from).replace("-", "")[:8]
+                    from_str  = str(co.starting_from).replace("-", "")[:8]
+                if hasattr(co, 'books_from') and co.books_from:
+                    books_str = str(co.books_from).replace("-", "")[:8]
 
                 cs = CompanyState(
-                    name              = co.name,
+                    name              = name,
                     guid              = co.guid or "",
-                    status            = status,
+                    status            = CompanyStatus.CONFIGURED,
                     last_sync_time    = last_sync,
                     last_alter_id     = last_alter,
                     last_synced_month = last_month,
                     is_initial_done   = is_initial,
                     starting_from     = from_str,
+                    books_from        = books_str,
+                    tally_host        = getattr(co, 'tally_host', 'localhost') or 'localhost',
+                    tally_port        = int(getattr(co, 'tally_port', 9000) or 9000),
                 )
-                self.state.companies[co.name] = cs
+                # Mark as not open in Tally until we check below
+                cs.tally_open = False
+                self.state.companies[name] = cs
+        finally:
+            db.close()
 
+        # ── Step 2: Fetch live Tally companies ────────────
+        tally_companies = []
+        try:
+            from services.tally_connector import TallyConnector
+            tally = TallyConnector(
+                host=self.state.tally.host,
+                port=self.state.tally.port,
+            )
+            if tally.status == "Connected":
+                tally_companies = tally.fetch_all_companies()
+        except Exception as e:
+            from logging_config import logger
+            logger.warning(f"[App] Could not fetch Tally company list: {e}")
+
+        # ── Step 3: Merge Tally into state ────────────────
+        tally_names = set()
+        for tc in tally_companies:
+            name = (tc.get("name") or "").strip()
+            if not name:
+                continue
+            tally_names.add(name)
+
+            # Normalize Tally starting_from (YYYYMMDD)
+            raw_from  = tc.get("starting_from", "")
+            raw_books = tc.get("books_from", "")
+            from_str  = str(raw_from).replace("-", "")[:8]  if raw_from  else None
+            books_str = str(raw_books).replace("-", "")[:8] if raw_books else None
+
+            if name in self.state.companies:
+                # Already in DB — just mark as open in Tally
+                self.state.companies[name].tally_open = True
+                # Fill in books_from if not already set
+                if not self.state.companies[name].books_from and books_str:
+                    self.state.companies[name].books_from = books_str
+            else:
+                # New — exists only in Tally, not in DB
+                cs = CompanyState(
+                    name          = name,
+                    guid          = tc.get("guid", ""),
+                    status        = CompanyStatus.NOT_CONFIGURED,
+                    starting_from = from_str,
+                    books_from    = books_str,
+                )
+                cs.tally_open = True
+                self.state.companies[name] = cs
+
+        # ── Step 4: Mark DB companies not currently open in Tally ─
+        for name, cs in self.state.companies.items():
+            if not hasattr(cs, 'tally_open'):
+                cs.tally_open = False
+
+    def save_company_to_db(self, company_name: str, guid: str,
+                           starting_from: str, books_from: str = None):
+        """
+        Insert or update a company record in the DB.
+        Called after the user fills in the Configure dialog.
+        """
+        from sqlalchemy.orm import sessionmaker
+        from database.models.company import Company
+
+        engine = self.state.db_engine
+        if not engine:
+            return False, "No DB connection"
+
+        Session = sessionmaker(bind=engine)
+        db      = Session()
+        try:
+            existing = db.query(Company).filter_by(name=company_name).first()
+            if existing:
+                existing.guid          = guid
+                existing.starting_from = starting_from
+                if books_from:
+                    existing.books_from = books_from
+            else:
+                co = Company(
+                    name          = company_name,
+                    guid          = guid,
+                    starting_from = starting_from,
+                )
+                if books_from and hasattr(Company, 'books_from'):
+                    co.books_from = books_from
+                db.add(co)
+            db.commit()
+            return True, "Saved"
+        except Exception as e:
+            db.rollback()
+            return False, str(e)
         finally:
             db.close()
 
@@ -556,9 +678,8 @@ class TallySyncApp:
                     fg=Color.DANGER,
                 )
                 messagebox.showerror(
-                    "Database Error",
-                    f"Could not connect to MySQL:\n{detail}\n\n"
-                    "Please check your database settings.",
+                    "Database Configuration Error",
+                    detail,
                 )
 
         elif event == "tally_status":

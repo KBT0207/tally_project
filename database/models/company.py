@@ -6,8 +6,8 @@ from datetime import datetime
 class Company(Base):
     __tablename__ = 'companies'
 
-    guid           = Column(String(255), primary_key=True)
-    name           = Column(String(255), nullable=False, index=True)
+    guid           = Column(String(255), nullable=False)
+    name           = Column(String(255), primary_key=True,index=True)
     formal_name    = Column(String(255), nullable=True)
     company_number = Column(String(20),  nullable=True)
     starting_from  = Column(Date,        nullable=True)
