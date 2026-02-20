@@ -269,6 +269,14 @@ class TallySyncApp:
         self._clock_lbl.pack(side="left")
         self._update_clock()
 
+        # ⚙ DB Settings button
+        tk.Button(
+            right, text="⚙",
+            font=Font.BODY, bg=Color.BG_HEADER, fg=Color.TEXT_SECONDARY,
+            relief="flat", bd=0, padx=6, cursor="hand2",
+            command=self.open_db_settings,
+        ).pack(side="left", padx=(Spacing.MD, 0))
+
         # Bottom border
         tk.Frame(self.main_frame, bg=Color.BORDER, height=1).grid(
             row=0, column=0, sticky="sew"
@@ -350,6 +358,70 @@ class TallySyncApp:
             page.on_show()
 
     # ─────────────────────────────────────────────────────────────────────────
+    #  DB config — load from file or prompt user
+    # ─────────────────────────────────────────────────────────────────────────
+    _DB_CONFIG_FILE = "db_config.ini"   # saved next to run_gui.py
+
+    def _load_db_config(self) -> dict:
+        """
+        Load DB credentials from db_config.ini.
+        If file doesn't exist or is incomplete, show a dialog to collect them.
+        Returns dict with keys: host, port, username, password, database
+        """
+        import configparser, os
+
+        cfg = configparser.ConfigParser()
+        defaults = {
+            "host":     "localhost",
+            "port":     "3306",
+            "username": "root",
+            "password": "",
+            "database": "tally_sync",
+        }
+
+        if os.path.exists(self._DB_CONFIG_FILE):
+            cfg.read(self._DB_CONFIG_FILE)
+            if "database" in cfg:
+                loaded = dict(cfg["database"])
+                # Merge with defaults for any missing keys
+                for k, v in defaults.items():
+                    loaded.setdefault(k, v)
+                return loaded
+
+        # No config file — show dialog on main thread and wait
+        result = {}
+        event  = threading.Event()
+
+        def show_dialog():
+            dialog = DBConfigDialog(self.root, defaults)
+            self.root.wait_window(dialog)
+            result.update(dialog.result or defaults)
+            # Save to file
+            cfg["database"] = result
+            with open(self._DB_CONFIG_FILE, "w") as f:
+                cfg.write(f)
+            event.set()
+
+        self.root.after(0, show_dialog)
+        event.wait()   # block background thread until user submits
+        return result
+
+    @staticmethod
+    def _create_engine(cfg: dict):
+        """Create SQLAlchemy engine from config dict using DatabaseConnector."""
+        from database.db_connector import DatabaseConnector
+        connector = DatabaseConnector(
+            username = cfg.get("username", "root"),
+            password = cfg.get("password", ""),
+            host     = cfg.get("host",     "localhost"),
+            port     = int(cfg.get("port", 3306)),
+            database = cfg.get("database", "tally_sync"),
+        )
+        connector.create_database_if_not_exists()
+        connector.create_tables()
+        return connector.get_engine()
+
+    # ─────────────────────────────────────────────────────────────────────────
     #  Startup sequence (background thread)
     # ─────────────────────────────────────────────────────────────────────────
     def _start_startup_sequence(self):
@@ -362,9 +434,10 @@ class TallySyncApp:
     def _startup_worker(self):
         # ── Step 1: Connect to database ──────────────────
         try:
-            from database.db_connector import get_engine
-            engine = get_engine()
-            self.state.db_engine = engine
+            cfg    = self._load_db_config()
+            engine = self._create_engine(cfg)
+            self.state.db_engine      = engine
+            self.state.db_config      = cfg        # store for reconnect
             self._q.put(("db_status", True, "Connected"))
         except Exception as e:
             self._q.put(("db_status", False, str(e)))
@@ -524,6 +597,18 @@ class TallySyncApp:
             self.state.sync_active = False
             self.state.emit("sync_finished")
 
+        elif event == "scheduler_updated":
+            _, company_name = msg
+            self.state.emit("scheduler_updated", company=company_name)
+
+        elif event == "scheduler_sync_done":
+            _, company_name = msg
+            self.state.emit("scheduler_updated", company=company_name)
+
+        elif event == "scheduler_job_error":
+            _, company_name, err = msg
+            self.state.set_company_status(company_name, CompanyStatus.SYNC_ERROR)
+
     # ─────────────────────────────────────────────────────────────────────────
     #  Public helper — post to queue from any thread
     # ─────────────────────────────────────────────────────────────────────────
@@ -554,7 +639,172 @@ class TallySyncApp:
         self.root.destroy()
 
     # ─────────────────────────────────────────────────────────────────────────
+    #  DB Settings dialog (re-open from header ⚙ button)
+    # ─────────────────────────────────────────────────────────────────────────
+    def open_db_settings(self):
+        import configparser, os
+        cfg = configparser.ConfigParser()
+
+        defaults = {
+            "host": "localhost", "port": "3306",
+            "username": "root",  "password": "",
+            "database": "tally_sync",
+        }
+        if os.path.exists(self._DB_CONFIG_FILE):
+            cfg.read(self._DB_CONFIG_FILE)
+            if "database" in cfg:
+                defaults.update(cfg["database"])
+
+        dialog = DBConfigDialog(self.root, defaults)
+        self.root.wait_window(dialog)
+
+        if dialog.result:
+            cfg["database"] = dialog.result
+            with open(self._DB_CONFIG_FILE, "w") as f:
+                cfg.write(f)
+            if messagebox.askyesno(
+                "Restart Required",
+                "DB settings saved.\n\nRestart the app for changes to take effect. Restart now?"
+            ):
+                self.root.destroy()
+
+    # ─────────────────────────────────────────────────────────────────────────
     #  Entry point
     # ─────────────────────────────────────────────────────────────────────────
     def run(self):
         self.root.mainloop()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  DB Config Dialog
+# ─────────────────────────────────────────────────────────────────────────────
+class DBConfigDialog(tk.Toplevel):
+    """
+    Modal dialog to collect MySQL connection details.
+    Sets self.result = dict on OK, or None on Cancel.
+    """
+
+    def __init__(self, parent, defaults: dict):
+        super().__init__(parent)
+        self.title("Database Connection Settings")
+        self.resizable(False, False)
+        self.grab_set()              # modal
+        self.result = None
+
+        self._vars = {}
+        self._build(defaults)
+
+        # Center over parent
+        self.update_idletasks()
+        pw = parent.winfo_rootx() + parent.winfo_width()  // 2
+        ph = parent.winfo_rooty() + parent.winfo_height() // 2
+        self.geometry(f"+{pw - 210}+{ph - 180}")
+
+    def _build(self, defaults: dict):
+        from gui.styles import Color, Font, Spacing
+
+        pad = tk.Frame(self, bg=Color.BG_CARD, padx=30, pady=24)
+        pad.pack(fill="both", expand=True)
+
+        tk.Label(
+            pad, text="MySQL / MariaDB Connection",
+            font=Font.HEADING_4, bg=Color.BG_CARD, fg=Color.TEXT_PRIMARY,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 16))
+
+        fields = [
+            ("Host",     "host",     False),
+            ("Port",     "port",     False),
+            ("Username", "username", False),
+            ("Password", "password", True),
+            ("Database", "database", False),
+        ]
+
+        for i, (label, key, secret) in enumerate(fields, start=1):
+            tk.Label(
+                pad, text=f"{label}:",
+                font=Font.BODY, bg=Color.BG_CARD, fg=Color.TEXT_SECONDARY,
+                anchor="w", width=10,
+            ).grid(row=i, column=0, sticky="w", pady=4)
+
+            var = tk.StringVar(value=defaults.get(key, ""))
+            self._vars[key] = var
+
+            entry = tk.Entry(
+                pad, textvariable=var,
+                font=Font.BODY, width=26,
+                bg=Color.BG_INPUT, fg=Color.TEXT_PRIMARY,
+                relief="solid", bd=1,
+                show="●" if secret else "",
+            )
+            entry.grid(row=i, column=1, sticky="ew", pady=4, padx=(8, 0))
+
+        # Test connection feedback
+        self._feedback = tk.Label(
+            pad, text="", font=Font.BODY_SM,
+            bg=Color.BG_CARD, fg=Color.TEXT_MUTED,
+        )
+        self._feedback.grid(row=len(fields)+1, column=0, columnspan=2,
+                            sticky="w", pady=(8, 0))
+
+        # Buttons
+        btn_row = tk.Frame(pad, bg=Color.BG_CARD)
+        btn_row.grid(row=len(fields)+2, column=0, columnspan=2,
+                     sticky="ew", pady=(16, 0))
+
+        tk.Button(
+            btn_row, text="Test Connection",
+            font=Font.BUTTON_SM, bg=Color.BG_ROOT, fg=Color.TEXT_PRIMARY,
+            relief="solid", bd=1, padx=10, pady=4, cursor="hand2",
+            command=self._on_test,
+        ).pack(side="left")
+
+        tk.Button(
+            btn_row, text="Cancel",
+            font=Font.BUTTON_SM, bg=Color.BG_CARD, fg=Color.TEXT_SECONDARY,
+            relief="solid", bd=1, padx=10, pady=4, cursor="hand2",
+            command=self.destroy,
+        ).pack(side="right", padx=(8, 0))
+
+        tk.Button(
+            btn_row, text="Save & Connect",
+            font=Font.BUTTON_SM, bg=Color.PRIMARY, fg=Color.TEXT_WHITE,
+            relief="flat", bd=0, padx=14, pady=4, cursor="hand2",
+            command=self._on_save,
+        ).pack(side="right")
+
+        # Enter key submits
+        self.bind("<Return>", lambda e: self._on_save())
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def _collect(self) -> dict:
+        return {k: v.get().strip() for k, v in self._vars.items()}
+
+    def _on_test(self):
+        self._feedback.configure(text="Testing...", fg=Color.TEXT_MUTED if True else "")
+        self.update_idletasks()
+        try:
+            from gui.styles import Color
+            from database.db_connector import DatabaseConnector
+            cfg = self._collect()
+            conn = DatabaseConnector(
+                username=cfg["username"], password=cfg["password"],
+                host=cfg["host"],        port=int(cfg["port"]),
+                database=cfg["database"],
+            )
+            ok = conn.test_connection()
+            if ok:
+                self._feedback.configure(text="✓ Connection successful!", fg=Color.SUCCESS)
+            else:
+                self._feedback.configure(text="✗ Connection failed — check credentials.", fg=Color.DANGER)
+        except Exception as e:
+            from gui.styles import Color
+            self._feedback.configure(text=f"✗ {e}", fg=Color.DANGER)
+
+    def _on_save(self):
+        cfg = self._collect()
+        if not cfg.get("host") or not cfg.get("database"):
+            from gui.styles import Color
+            self._feedback.configure(text="Host and Database are required.", fg=Color.DANGER)
+            return
+        self.result = cfg
+        self.destroy()
