@@ -1,32 +1,28 @@
 """
 gui/controllers/company_controller.py
 =======================================
-Loads and persists per-company scheduler configuration.
+Loads and persists per-company scheduler configuration in MySQL.
 
-Since your DB doesn't have a dedicated scheduler table, we store
-schedule config in a simple JSON file: scheduler_config.json
-(next to run_gui.py). This keeps it lightweight — no schema change needed.
+Table: company_scheduler_config  (see database/models/scheduler_config.py)
+  One row per company — upserted on every save.
 
-Format:
-{
-  "ABC Traders Pvt Ltd": {
-    "enabled":   true,
-    "interval":  "hourly",    // "hourly" | "daily" | "minutes"
-    "value":     1,           // every N hours/minutes
-    "time":      "09:00",     // HH:MM for daily
-    "vouchers": ["sales", "purchase", "ledger", ...]
-  },
-  ...
-}
+Replaces the old scheduler_config.json flat-file approach.
 """
 
-import json
-import os
+from datetime import datetime, timedelta
 from typing import Optional
 
-from gui.state import AppState, CompanyState
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 
-SCHEDULER_CONFIG_FILE = "scheduler_config.json"
+from gui.state import AppState, CompanyState
+from logging_config import logger
+
+
+def _get_model():
+    """Lazy import to avoid circular deps at module load time."""
+    from database.models.scheduler_config import CompanySchedulerConfig
+    return CompanySchedulerConfig
 
 
 class CompanyController:
@@ -35,105 +31,132 @@ class CompanyController:
         self._state = state
 
     # ─────────────────────────────────────────────────────────────────────────
-    #  Load scheduler config from file → into state
+    #  Load  DB → state
     # ─────────────────────────────────────────────────────────────────────────
     def load_scheduler_config(self):
         """
-        Read scheduler_config.json and apply settings to matching CompanyState objects.
-        Safe to call even if file doesn't exist.
+        Read company_scheduler_config table and apply to matching CompanyState
+        objects in state.companies.  Safe to call even if table is empty.
         """
-        if not os.path.exists(SCHEDULER_CONFIG_FILE):
+        engine = self._state.db_engine
+        if not engine:
+            logger.warning("[CompanyController] No DB engine — cannot load scheduler config")
             return
 
+        Model   = _get_model()
+        Session = sessionmaker(bind=engine)
+        db      = Session()
         try:
-            with open(SCHEDULER_CONFIG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            rows = db.query(Model).all()
+            for row in rows:
+                co = self._state.companies.get(row.company_name)
+                if co:
+                    co.schedule_enabled  = bool(row.enabled)
+                    co.schedule_interval = row.interval or "hourly"
+                    co.schedule_value    = int(row.value  or 1)
+                    co.schedule_time     = row.time       or "09:00"
+            logger.info(f"[CompanyController] Loaded scheduler config for {len(rows)} companies")
         except Exception as e:
-            print(f"[CompanyController] Could not read scheduler config: {e}")
-            return
-
-        for name, cfg in data.items():
-            co = self._state.companies.get(name)
-            if co:
-                co.schedule_enabled  = cfg.get("enabled",  False)
-                co.schedule_interval = cfg.get("interval", "hourly")
-                co.schedule_value    = int(cfg.get("value", 1))
-                co.schedule_time     = cfg.get("time",     "09:00")
+            logger.error(f"[CompanyController] Failed to load scheduler config: {e}")
+        finally:
+            db.close()
 
     # ─────────────────────────────────────────────────────────────────────────
-    #  Save all scheduler config from state → file
-    # ─────────────────────────────────────────────────────────────────────────
-    def save_scheduler_config(self):
-        """Persist all company schedule settings to scheduler_config.json."""
-        data = {}
-        for name, co in self._state.companies.items():
-            data[name] = {
-                "enabled":  co.schedule_enabled,
-                "interval": co.schedule_interval,
-                "value":    co.schedule_value,
-                "time":     co.schedule_time,
-            }
-        try:
-            with open(SCHEDULER_CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-        except Exception as e:
-            print(f"[CompanyController] Could not save scheduler config: {e}")
-
-    # ─────────────────────────────────────────────────────────────────────────
-    #  Save one company
+    #  Save one company  state → DB  (upsert)
     # ─────────────────────────────────────────────────────────────────────────
     def save_one(self, name: str):
-        """Save just one company's schedule. Reads existing file to preserve others."""
-        existing = {}
-        if os.path.exists(SCHEDULER_CONFIG_FILE):
-            try:
-                with open(SCHEDULER_CONFIG_FILE, "r", encoding="utf-8") as f:
-                    existing = json.load(f)
-            except Exception:
-                pass
+        """
+        Upsert scheduler config for a single company.
+        Uses MySQL  INSERT … ON DUPLICATE KEY UPDATE  for atomic upsert.
+        """
+        engine = self._state.db_engine
+        if not engine:
+            logger.warning("[CompanyController] No DB engine — cannot save scheduler config")
+            return
 
         co = self._state.companies.get(name)
-        if co:
-            existing[name] = {
-                "enabled":  co.schedule_enabled,
-                "interval": co.schedule_interval,
-                "value":    co.schedule_value,
-                "time":     co.schedule_time,
-            }
+        if not co:
+            logger.warning(f"[CompanyController] Company not found in state: {name}")
+            return
 
-        try:
-            with open(SCHEDULER_CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(existing, f, indent=2)
-        except Exception as e:
-            print(f"[CompanyController] Could not save config for {name}: {e}")
+        self._upsert(engine, name, co)
 
     # ─────────────────────────────────────────────────────────────────────────
-    #  Compute next run time string for display
+    #  Save all companies  state → DB
+    # ─────────────────────────────────────────────────────────────────────────
+    def save_scheduler_config(self):
+        """Upsert scheduler config for every company in state."""
+        engine = self._state.db_engine
+        if not engine:
+            logger.warning("[CompanyController] No DB engine — cannot save scheduler config")
+            return
+
+        for name, co in self._state.companies.items():
+            self._upsert(engine, name, co)
+
+        logger.info(f"[CompanyController] Saved scheduler config for "
+                    f"{len(self._state.companies)} companies")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    #  Internal upsert helper
+    # ─────────────────────────────────────────────────────────────────────────
+    def _upsert(self, engine, name: str, co: CompanyState):
+        """
+        INSERT … ON DUPLICATE KEY UPDATE for one company row.
+        Works correctly whether the row already exists or not.
+        """
+        Model   = _get_model()
+        Session = sessionmaker(bind=engine)
+        db      = Session()
+        try:
+            stmt = (
+                mysql_insert(Model)
+                .values(
+                    company_name = name,
+                    enabled      = co.schedule_enabled,
+                    interval     = co.schedule_interval,
+                    value        = co.schedule_value,
+                    time         = co.schedule_time,
+                    updated_at   = datetime.utcnow(),
+                )
+                .on_duplicate_key_update(
+                    enabled    = co.schedule_enabled,
+                    interval   = co.schedule_interval,
+                    value      = co.schedule_value,
+                    time       = co.schedule_time,
+                    updated_at = datetime.utcnow(),
+                )
+            )
+            db.execute(stmt)
+            db.commit()
+            logger.debug(f"[CompanyController] Upserted scheduler config for: {name}")
+        except Exception as e:
+            db.rollback()
+            logger.error(f"[CompanyController] Failed to save config for {name}: {e}")
+        finally:
+            db.close()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    #  Compute next run time string for display  (no DB access needed)
     # ─────────────────────────────────────────────────────────────────────────
     @staticmethod
     def next_run_label(co: CompanyState) -> str:
-        """Return a human-readable 'Next run: ...' string."""
-        from datetime import datetime, timedelta
-
+        """Return a human-readable 'Next run: ...' string for the scheduler UI."""
         if not co.schedule_enabled:
             return "—"
 
         now = datetime.now()
 
         if co.schedule_interval == "minutes":
-            delta = timedelta(minutes=co.schedule_value)
-            next_run = now + delta
-            return next_run.strftime("%d %b %Y  %H:%M")
+            return (now + timedelta(minutes=co.schedule_value)).strftime("%d %b %Y  %H:%M")
 
         elif co.schedule_interval == "hourly":
-            delta = timedelta(hours=co.schedule_value)
-            next_run = now + delta
-            return next_run.strftime("%d %b %Y  %H:%M")
+            return (now + timedelta(hours=co.schedule_value)).strftime("%d %b %Y  %H:%M")
 
         elif co.schedule_interval == "daily":
             try:
-                h, m    = map(int, co.schedule_time.split(":"))
-                target  = now.replace(hour=h, minute=m, second=0, microsecond=0)
+                h, m   = map(int, co.schedule_time.split(":"))
+                target = now.replace(hour=h, minute=m, second=0, microsecond=0)
                 if target <= now:
                     target += timedelta(days=1)
                 return target.strftime("%d %b %Y  %H:%M")

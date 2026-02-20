@@ -441,6 +441,8 @@ class TallySyncApp:
     def _create_engine(cfg: dict):
         """Create SQLAlchemy engine from config dict using DatabaseConnector."""
         from database.db_connector import DatabaseConnector
+        from database.models.scheduler_config import Base as SchedBase
+
         connector = DatabaseConnector(
             username = cfg.get("username", "root"),
             password = cfg.get("password", ""),
@@ -450,7 +452,10 @@ class TallySyncApp:
         )
         connector.create_database_if_not_exists()
         connector.create_tables()
-        return connector.get_engine()
+        engine = connector.get_engine()
+        # Create company_scheduler_config table if not yet present
+        SchedBase.metadata.create_all(engine, checkfirst=True)
+        return engine
 
     # ─────────────────────────────────────────────────────────────────────────
     #  Startup sequence (background thread)
@@ -477,9 +482,18 @@ class TallySyncApp:
         # ── Step 2: Load companies from DB ───────────────
         try:
             self._load_companies_from_db(engine)
-            self._q.put(("companies_loaded", None))
         except Exception as e:
             self._q.put(("error", f"Failed to load companies: {e}"))
+
+        # ── Step 3: Load scheduler config from DB ────────
+        try:
+            from gui.controllers.company_controller import CompanyController
+            CompanyController(self.state).load_scheduler_config()
+        except Exception as e:
+            from logging_config import logger
+            logger.warning(f"[App] Could not load scheduler config: {e}")
+
+        self._q.put(("companies_loaded", None))
 
         # ── Step 3: Ping Tally ────────────────────────────
         try:
