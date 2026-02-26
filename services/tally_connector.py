@@ -9,7 +9,18 @@ from urllib3.util.retry import Retry
 
 from logging_config import logger
 
+
 class TallyConnector:
+    """
+    HTTP connector to a locally-running Tally Prime instance.
+
+    Handles:
+      • XML template loading & caching
+      • Request preparation (date range, CDC AlterID substitution)
+      • Response sanitisation for safe XML parsing
+      • Debug file saving
+      • All fetch methods for every voucher / master type
+    """
 
     _xml_template_cache: Dict[str, ET.Element] = {}
 
@@ -24,20 +35,22 @@ class TallyConnector:
         logger.info(f'Initializing TallyConnector → {self.url}')
         self.connect()
 
+    # ── Session / connection ──────────────────────────────────────────────────
+
     def _create_session(self, max_retries: int) -> requests.Session:
         session = requests.Session()
         retry_strategy = Retry(
-            total=max_retries,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["POST"],
+            total            = max_retries,
+            backoff_factor   = 1,
+            status_forcelist = [429, 500, 502, 503, 504],
+            allowed_methods  = ["POST"],
         )
         adapter = HTTPAdapter(
-            max_retries=retry_strategy,
-            pool_connections=10,
-            pool_maxsize=20,
+            max_retries      = retry_strategy,
+            pool_connections = 10,
+            pool_maxsize     = 20,
         )
-        session.mount("http://", adapter)
+        session.mount("http://",  adapter)
         session.mount("https://", adapter)
         return session
 
@@ -57,28 +70,28 @@ class TallyConnector:
             logger.error(f'Cannot connect to Tally: {e}', exc_info=True)
             return False
 
+    # ── XML template management ───────────────────────────────────────────────
+
     @classmethod
     def _load_xml_template(cls, template_path: str) -> ET.Element:
         if template_path not in cls._xml_template_cache:
             tree = ET.parse(template_path)
             cls._xml_template_cache[template_path] = tree.getroot()
             logger.debug(f'Cached XML template: {template_path}')
-
         return ET.fromstring(ET.tostring(cls._xml_template_cache[template_path]))
 
     def _prepare_xml_request(
         self,
         template_path: str,
-        company_name: str,
-        from_date: Optional[str] = None,
-        to_date:   Optional[str] = None,
-        alter_id:  Optional[int] = None,
+        company_name:  str,
+        from_date:     Optional[str] = None,
+        to_date:       Optional[str] = None,
+        alter_id:      Optional[int] = None,
     ) -> bytes:
         root = self._load_xml_template(template_path)
 
         for elem in root.iter('SVCURRENTCOMPANY'):
             elem.text = company_name
-
         if from_date:
             for elem in root.iter('SVFROMDATE'):
                 elem.text = from_date
@@ -88,16 +101,27 @@ class TallyConnector:
 
         xml_str = ET.tostring(root, encoding='unicode')
 
+        # Substitute text placeholders that can't be placed as XML elements
         alter_id_value = alter_id if alter_id is not None else 0
-        xml_str = xml_str.replace('PLACEHOLDER_ALTER_ID', str(alter_id_value))
-
+        xml_str = xml_str.replace('PLACEHOLDER_ALTER_ID',  str(alter_id_value))
         xml_str = xml_str.replace('PLACEHOLDER_FROM_DATE', from_date or '')
         xml_str = xml_str.replace('PLACEHOLDER_TO_DATE',   to_date   or '')
 
         return xml_str.encode('utf-8')
 
+    # ── Response sanitisation ─────────────────────────────────────────────────
+
     @staticmethod
     def sanitize_xml(xml_content) -> bytes:
+        """
+        Decode, strip control characters, and fix unescaped ampersands so the
+        response can be safely parsed by ElementTree.
+
+        NOTE: Tally uses '?' as a placeholder for the home/base currency symbol.
+              This is intentional — do NOT strip or replace it.  The FCY parsers
+              in data_processor.py rely on it to detect exchange-rate patterns
+              such as '? 84.5/$'.
+        """
         if isinstance(xml_content, bytes):
             for encoding in ('utf-8', 'windows-1252', 'latin-1'):
                 try:
@@ -108,24 +132,41 @@ class TallyConnector:
 
         xml_content = str(xml_content)
 
-        currency_map = {
+        # Log which foreign-currency symbols are present (debug only)
+        _known_symbols = {
             '$': 'USD', '£': 'GBP', '€': 'EUR', '¥': 'JPY/CNY',
             '₹': 'INR', '₨': 'INR/PKR', '₩': 'KRW', '₱': 'PHP',
             '₽': 'RUB', '₺': 'TRY', '₪': 'ILS', '₦': 'NGN',
-            '฿': 'THB', '₫': 'VND', '?': 'Corrupted symbol',
+            '฿': 'THB', '₫': 'VND',
+            # '?' is intentionally excluded — it is Tally's home-currency marker,
+            # NOT a corrupt byte, and must be preserved for FCY parsing.
         }
-        found = [f"{sym}({cur})" for sym, cur in currency_map.items() if sym in xml_content]
+        found = [f"{sym}({cur})" for sym, cur in _known_symbols.items() if sym in xml_content]
         if found:
             logger.debug(f'Currency symbols in response: {", ".join(found)}')
 
+        # Strip truly invalid XML control characters (except \t \n \r which are fine)
         xml_content = re.sub(r'&#([0-8]|1[1-2]|1[4-9]|2[0-9]|3[0-1]);', '', xml_content)
         xml_content = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', xml_content)
 
-        xml_content = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)', '&amp;', xml_content)
+        # Fix bare & that are not part of a valid entity reference
+        xml_content = re.sub(
+            r'&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)',
+            '&amp;',
+            xml_content,
+        )
 
         return xml_content.encode('utf-8')
 
-    def _save_debug_file(self, content: bytes, prefix: str, company_name: str, suffix: str = 'xml') -> str:
+    # ── Debug helpers ─────────────────────────────────────────────────────────
+
+    def _save_debug_file(
+        self,
+        content:      bytes,
+        prefix:       str,
+        company_name: str,
+        suffix:       str = 'xml',
+    ) -> str:
         safe_company = company_name.replace(' ', '_')
         timestamp    = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename     = f"{prefix}_{safe_company}_{timestamp}.{suffix}"
@@ -133,6 +174,8 @@ class TallyConnector:
             f.write(content)
         logger.info(f'Saved debug file: {filename}')
         return filename
+
+    # ── Core fetch ────────────────────────────────────────────────────────────
 
     def _fetch(
         self,
@@ -157,7 +200,11 @@ class TallyConnector:
                 logger.info(f'  CDC mode   : AlterID > {alter_id}')
 
             if debug:
-                self._save_debug_file(xml_payload, f'req_{data_type.lower().replace(" ", "_")}', company_name)
+                self._save_debug_file(
+                    xml_payload,
+                    f'req_{data_type.lower().replace(" ", "_")}',
+                    company_name,
+                )
 
             t0 = datetime.now()
             try:
@@ -180,9 +227,17 @@ class TallyConnector:
             logger.info(f'[{company_name}] Received {data_type} in {elapsed:.1f}s')
 
             if debug:
-                self._save_debug_file(response.content, f'resp_raw_{data_type.lower().replace(" ", "_")}', company_name)
+                self._save_debug_file(
+                    response.content,
+                    f'resp_raw_{data_type.lower().replace(" ", "_")}',
+                    company_name,
+                )
                 sanitized_debug = self.sanitize_xml(response.content)
-                self._save_debug_file(sanitized_debug, f'resp_{data_type.lower().replace(" ", "_")}', company_name)
+                self._save_debug_file(
+                    sanitized_debug,
+                    f'resp_{data_type.lower().replace(" ", "_")}',
+                    company_name,
+                )
 
             if alter_id is not None:
                 self._verify_alter_id_filter(response.content, alter_id, data_type)
@@ -190,14 +245,21 @@ class TallyConnector:
             return self.sanitize_xml(response.content)
 
         except Exception as e:
-            logger.error(f'[{company_name}] Unexpected error fetching {data_type}: {e}', exc_info=True)
+            logger.error(
+                f'[{company_name}] Unexpected error fetching {data_type}: {e}', exc_info=True
+            )
             return None
 
     def _verify_alter_id_filter(self, raw_content: bytes, alter_id: int, data_type: str):
+        """Log a warning if any returned records are at or below the CDC threshold."""
         try:
             sanitized = self.sanitize_xml(raw_content)
             root      = ET.fromstring(sanitized)
-            ids       = [int(e.text) for e in root.iter('ALTERID') if e.text and e.text.strip().isdigit()]
+            ids       = [
+                int(e.text)
+                for e in root.iter('ALTERID')
+                if e.text and e.text.strip().lstrip('-').isdigit()
+            ]
             if ids:
                 min_id, max_id = min(ids), max(ids)
                 ok = '✓' if min_id > alter_id else '✗ WARNING: some records at/below threshold!'
@@ -206,9 +268,13 @@ class TallyConnector:
                     f'range={min_id}→{max_id} | threshold={alter_id} | {ok}'
                 )
             else:
-                logger.debug(f'[ALTER_ID CHECK] {data_type} | no ALTERID tags in response (empty result)')
+                logger.debug(
+                    f'[ALTER_ID CHECK] {data_type} | no ALTERID tags in response (empty result)'
+                )
         except Exception as e:
             logger.debug(f'[ALTER_ID CHECK] {data_type} | could not inspect response: {e}')
+
+    # ── Company master ────────────────────────────────────────────────────────
 
     def fetch_all_companies(self, debug: bool = False) -> list:
         try:
@@ -219,10 +285,10 @@ class TallyConnector:
                 self._save_debug_file(xml_payload, 'req_all_companies', 'ALL')
 
             response = self.session.post(
-                url=self.url,
-                headers=self.header,
-                data=xml_payload,
-                timeout=120
+                url     = self.url,
+                headers = self.header,
+                data    = xml_payload,
+                timeout = 120,
             )
 
             if response.status_code != 200:
@@ -230,17 +296,13 @@ class TallyConnector:
                 return []
 
             if debug:
-                # Save raw response
                 self._save_debug_file(response.content, 'resp_raw_all_companies', 'ALL')
-
-                # Save sanitized response
                 sanitized_debug = self.sanitize_xml(response.content)
                 self._save_debug_file(sanitized_debug, 'resp_all_companies', 'ALL')
 
             sanitized = self.sanitize_xml(response.content)
             root      = ET.fromstring(sanitized)
             companies = [self._parse_company(c) for c in root.findall('.//COMPANY')]
-
             logger.info(f'Found {len(companies)} companies in Tally')
             return companies
 
@@ -251,14 +313,16 @@ class TallyConnector:
     @staticmethod
     def _parse_company(company: ET.Element) -> Dict[str, Any]:
         return {
-            'guid'            : company.findtext('GUID',                     ''),
-            'name'            : company.findtext('NAME',                     ''),
-            'formal_name'     : company.findtext('BASICCOMPANYFORMALNAME',   ''),
-            'company_number'  : company.findtext('COMPANYNUMBER',            ''),
-            'starting_from'   : company.findtext('STARTINGFROM',             ''),
-            'books_from'      : company.findtext('BOOKSFROM',                ''),
-            'audited_upto'    : company.findtext('AUDITEDUPTO',              ''),
+            'guid'          : company.findtext('GUID',                   ''),
+            'name'          : company.findtext('NAME',                   ''),
+            'formal_name'   : company.findtext('BASICCOMPANYFORMALNAME', ''),
+            'company_number': company.findtext('COMPANYNUMBER',          ''),
+            'starting_from' : company.findtext('STARTINGFROM',           ''),
+            'books_from'    : company.findtext('BOOKSFROM',              ''),
+            'audited_upto'  : company.findtext('AUDITEDUPTO',            ''),
         }
+
+    # ── Master fetches ────────────────────────────────────────────────────────
 
     def fetch_ledgers(
         self,
@@ -276,11 +340,8 @@ class TallyConnector:
         debug:         bool = False,
     ) -> Optional[bytes]:
         return self._fetch(
-            'utils/cdc/ledger_cdc.xml',
-            'Ledgers CDC',
-            company_name,
-            alter_id=last_alter_id,
-            debug=debug,
+            'utils/cdc/ledger_cdc.xml', 'Ledgers CDC',
+            company_name, alter_id=last_alter_id, debug=debug,
         )
 
     def fetch_groups(
@@ -294,11 +355,16 @@ class TallyConnector:
 
     def fetch_groups_cdc(
         self,
-        company_name: str,
+        company_name:  str,
         last_alter_id: int,
         debug:         bool = False,
     ) -> Optional[bytes]:
-        return self._fetch('utils/cdc/groups_cdc.xml', 'Groups CDC', company_name, alter_id=last_alter_id, debug=debug)
+        return self._fetch(
+            'utils/cdc/groups_cdc.xml', 'Groups CDC',
+            company_name, alter_id=last_alter_id, debug=debug,
+        )
+
+    # ── Inventory voucher fetches (snapshot) ──────────────────────────────────
 
     def fetch_sales(
         self,
@@ -317,6 +383,26 @@ class TallyConnector:
         debug:        bool          = False,
     ) -> Optional[bytes]:
         return self._fetch('utils/purchase_vouchers.xml', 'Purchase', company_name, from_date, to_date, debug=debug)
+
+    def fetch_credit_note(
+        self,
+        company_name: str,
+        from_date:    Optional[str] = None,
+        to_date:      Optional[str] = None,
+        debug:        bool          = False,
+    ) -> Optional[bytes]:
+        return self._fetch('utils/credit_note.xml', 'Credit Note', company_name, from_date, to_date, debug=debug)
+
+    def fetch_debit_note(
+        self,
+        company_name: str,
+        from_date:    Optional[str] = None,
+        to_date:      Optional[str] = None,
+        debug:        bool          = False,
+    ) -> Optional[bytes]:
+        return self._fetch('utils/debit_note.xml', 'Debit Note', company_name, from_date, to_date, debug=debug)
+
+    # ── Ledger voucher fetches (snapshot) ─────────────────────────────────────
 
     def fetch_receipt(
         self,
@@ -354,23 +440,7 @@ class TallyConnector:
     ) -> Optional[bytes]:
         return self._fetch('utils/contra_vouchers.xml', 'Contra', company_name, from_date, to_date, debug=debug)
 
-    def fetch_credit_note(
-        self,
-        company_name: str,
-        from_date:    Optional[str] = None,
-        to_date:      Optional[str] = None,
-        debug:        bool          = False,
-    ) -> Optional[bytes]:
-        return self._fetch('utils/credit_note.xml', 'Credit Note', company_name, from_date, to_date, debug=debug)
-
-    def fetch_debit_note(
-        self,
-        company_name: str,
-        from_date:    Optional[str] = None,
-        to_date:      Optional[str] = None,
-        debug:        bool          = False,
-    ) -> Optional[bytes]:
-        return self._fetch('utils/debit_note.xml', 'Debit Note', company_name, from_date, to_date, debug=debug)
+    # ── CDC fetches ───────────────────────────────────────────────────────────
 
     def fetch_sales_cdc(
         self,
@@ -378,7 +448,10 @@ class TallyConnector:
         last_alter_id: int,
         debug:         bool = False,
     ) -> Optional[bytes]:
-        return self._fetch('utils/cdc/sales_cdc.xml', 'Sales CDC', company_name, alter_id=last_alter_id, debug=debug)
+        return self._fetch(
+            'utils/cdc/sales_cdc.xml', 'Sales CDC',
+            company_name, alter_id=last_alter_id, debug=debug,
+        )
 
     def fetch_purchase_cdc(
         self,
@@ -386,7 +459,10 @@ class TallyConnector:
         last_alter_id: int,
         debug:         bool = False,
     ) -> Optional[bytes]:
-        return self._fetch('utils/cdc/purchase_cdc.xml', 'Purchase CDC', company_name, alter_id=last_alter_id, debug=debug)
+        return self._fetch(
+            'utils/cdc/purchase_cdc.xml', 'Purchase CDC',
+            company_name, alter_id=last_alter_id, debug=debug,
+        )
 
     def fetch_receipt_cdc(
         self,
@@ -394,7 +470,10 @@ class TallyConnector:
         last_alter_id: int,
         debug:         bool = False,
     ) -> Optional[bytes]:
-        return self._fetch('utils/cdc/receipt_cdc.xml', 'Receipt CDC', company_name, alter_id=last_alter_id, debug=debug)
+        return self._fetch(
+            'utils/cdc/receipt_cdc.xml', 'Receipt CDC',
+            company_name, alter_id=last_alter_id, debug=debug,
+        )
 
     def fetch_payment_cdc(
         self,
@@ -402,7 +481,10 @@ class TallyConnector:
         last_alter_id: int,
         debug:         bool = False,
     ) -> Optional[bytes]:
-        return self._fetch('utils/cdc/payment_cdc.xml', 'Payment CDC', company_name, alter_id=last_alter_id, debug=debug)
+        return self._fetch(
+            'utils/cdc/payment_cdc.xml', 'Payment CDC',
+            company_name, alter_id=last_alter_id, debug=debug,
+        )
 
     def fetch_journal_cdc(
         self,
@@ -410,7 +492,10 @@ class TallyConnector:
         last_alter_id: int,
         debug:         bool = False,
     ) -> Optional[bytes]:
-        return self._fetch('utils/cdc/journal_cdc.xml', 'Journal CDC', company_name, alter_id=last_alter_id, debug=debug)
+        return self._fetch(
+            'utils/cdc/journal_cdc.xml', 'Journal CDC',
+            company_name, alter_id=last_alter_id, debug=debug,
+        )
 
     def fetch_contra_cdc(
         self,
@@ -418,7 +503,10 @@ class TallyConnector:
         last_alter_id: int,
         debug:         bool = False,
     ) -> Optional[bytes]:
-        return self._fetch('utils/cdc/contra_cdc.xml', 'Contra CDC', company_name, alter_id=last_alter_id, debug=debug)
+        return self._fetch(
+            'utils/cdc/contra_cdc.xml', 'Contra CDC',
+            company_name, alter_id=last_alter_id, debug=debug,
+        )
 
     def fetch_credit_note_cdc(
         self,
@@ -426,7 +514,10 @@ class TallyConnector:
         last_alter_id: int,
         debug:         bool = False,
     ) -> Optional[bytes]:
-        return self._fetch('utils/cdc/credit_cdc.xml', 'Credit Note CDC', company_name, alter_id=last_alter_id, debug=debug)
+        return self._fetch(
+            'utils/cdc/credit_cdc.xml', 'Credit Note CDC',
+            company_name, alter_id=last_alter_id, debug=debug,
+        )
 
     def fetch_debit_note_cdc(
         self,
@@ -434,7 +525,12 @@ class TallyConnector:
         last_alter_id: int,
         debug:         bool = False,
     ) -> Optional[bytes]:
-        return self._fetch('utils/cdc/debit_cdc.xml', 'Debit Note CDC', company_name, alter_id=last_alter_id, debug=debug)
+        return self._fetch(
+            'utils/cdc/debit_cdc.xml', 'Debit Note CDC',
+            company_name, alter_id=last_alter_id, debug=debug,
+        )
+
+    # ── Report fetches ────────────────────────────────────────────────────────
 
     def fetch_trial_balance(
         self,
@@ -463,6 +559,8 @@ class TallyConnector:
     ) -> Optional[bytes]:
         return self._fetch('utils/reports/profit_loss.xml', 'Profit & Loss', company_name, from_date, to_date, debug=debug)
 
+    # ── Date utilities ────────────────────────────────────────────────────────
+
     @staticmethod
     def parse_tally_date(date_str: str) -> Optional[datetime]:
         try:
@@ -475,6 +573,8 @@ class TallyConnector:
     @staticmethod
     def format_tally_date(dt: datetime) -> Optional[str]:
         return dt.strftime('%Y%m%d') if dt else None
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def close(self):
         if hasattr(self, 'session'):

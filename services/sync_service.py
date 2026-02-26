@@ -33,10 +33,11 @@ from database.database_processor import (
     _get_session,
 )
 
-SNAPSHOT_CHUNK_MONTHS = 3
+# ── Tuning constants ──────────────────────────────────────────────────────────
+SNAPSHOT_CHUNK_MONTHS = 3   # months fetched per Tally API call during snapshot
+VOUCHER_WORKERS       = 2   # parallel threads for voucher sync
 
-VOUCHER_WORKERS = 2
-
+# ── Voucher configuration table ───────────────────────────────────────────────
 VOUCHER_CONFIG = [
     {
         'voucher_type'    : 'sales',
@@ -112,34 +113,45 @@ VOUCHER_CONFIG = [
     },
 ]
 
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
 def _get_max_alter_id(rows: list) -> int:
     if not rows:
         return 0
     return max(int(r.get('alter_id', 0)) for r in rows)
 
+
 def _resolve_from_date(company: dict) -> str:
+    """Return YYYYMMDD start date for a company; fall back to a safe default."""
     starting_from = company.get('starting_from', '')
     if starting_from:
         cleaned = str(starting_from).strip().replace('-', '')
         if len(cleaned) == 8 and cleaned.isdigit():
             return cleaned
     fallback = '20240401'
-    logger.warning(f"No valid starting_from for '{company.get('name')}' — using fallback {fallback}")
+    logger.warning(
+        f"No valid starting_from for '{company.get('name')}' — using fallback {fallback}"
+    )
     return fallback
 
+
 def _generate_chunks(from_date_str: str, to_date_str: str, chunk_months: int = SNAPSHOT_CHUNK_MONTHS):
-    start = datetime.strptime(from_date_str, '%Y%m%d').date()
-    end   = datetime.strptime(to_date_str,   '%Y%m%d').date()
+    """
+    Yield (chunk_from, chunk_to, month_str) tuples covering [from_date, to_date]
+    in steps of chunk_months months.
+    """
+    start       = datetime.strptime(from_date_str, '%Y%m%d').date()
+    end         = datetime.strptime(to_date_str,   '%Y%m%d').date()
     chunk_start = start
 
     while chunk_start <= end:
-
         end_month = chunk_start.month + chunk_months - 1
         end_year  = chunk_start.year + (end_month - 1) // 12
         end_month = (end_month - 1) % 12 + 1
         last_day  = monthrange(end_year, end_month)[1]
 
-        chunk_end  = min(date(end_year, end_month, last_day), end)
+        chunk_end = min(date(end_year, end_month, last_day), end)
         month_str  = chunk_end.strftime('%Y%m')
         chunk_from = chunk_start.strftime('%Y%m%d')
         chunk_to   = chunk_end.strftime('%Y%m%d')
@@ -153,7 +165,9 @@ def _generate_chunks(from_date_str: str, to_date_str: str, chunk_months: int = S
         next_year   = chunk_end.year      if chunk_end.month < 12 else chunk_end.year + 1
         chunk_start = date(next_year, next_month, 1)
 
+
 def _mark_chunk_done(company_name: str, voucher_type: str, month_str: str, engine):
+    """Persist progress for a chunk that returned no data so we can skip it on restart."""
     db = _get_session(engine)
     try:
         state = db.query(SyncState).filter_by(
@@ -182,14 +196,24 @@ def _mark_chunk_done(company_name: str, voucher_type: str, month_str: str, engin
     finally:
         db.close()
 
-def _sync_trial_balance(company_name: str, tally: TallyConnector, engine, from_date: str, to_date: str):
+
+# ── Sub-sync functions ────────────────────────────────────────────────────────
+
+def _sync_trial_balance(
+    company_name: str,
+    tally:        TallyConnector,
+    engine,
+    from_date:    str,
+    to_date:      str,
+):
     logger.info(f"[{company_name}] Syncing Trial Balance | {from_date} -> {to_date}")
     try:
+        state          = get_sync_state(company_name, 'trial_balance', engine)
+        saved_alter_id = state.last_alter_id if state else 0
 
-        state              = get_sync_state(company_name, 'trial_balance', engine)
-        saved_alter_id     = state.last_alter_id if state else 0
-
-        xml = tally.fetch_trial_balance(company_name=company_name, from_date=from_date, to_date=to_date)
+        xml = tally.fetch_trial_balance(
+            company_name=company_name, from_date=from_date, to_date=to_date
+        )
         if not xml:
             logger.warning(f"[{company_name}] No trial balance data from Tally")
             return
@@ -203,7 +227,7 @@ def _sync_trial_balance(company_name: str, tally: TallyConnector, engine, from_d
 
         if max_alter_id == saved_alter_id and saved_alter_id > 0:
             logger.info(
-                f"[{company_name}] Trial Balance SKIPPED upsert — "
+                f"[{company_name}] Trial Balance SKIPPED — "
                 f"max_alter_id unchanged ({max_alter_id}), no changes in Tally"
             )
             return
@@ -212,12 +236,12 @@ def _sync_trial_balance(company_name: str, tally: TallyConnector, engine, from_d
         update_sync_state(company_name, 'trial_balance', max_alter_id, engine)
         logger.info(
             f"[{company_name}] Trial Balance done | "
-            f"rows={len(rows)} | max_alter_id={max_alter_id} "
-            f"(was {saved_alter_id})"
+            f"rows={len(rows)} | max_alter_id={max_alter_id} (was {saved_alter_id})"
         )
 
     except Exception:
         logger.exception(f"[{company_name}] Trial Balance sync failed")
+
 
 def _sync_ledgers(company_name: str, tally: TallyConnector, engine):
     logger.info(f"[{company_name}] Syncing Ledgers")
@@ -228,26 +252,31 @@ def _sync_ledgers(company_name: str, tally: TallyConnector, engine):
 
         if is_initial_done:
             logger.info(f"[{company_name}][ledger] CDC | last_alter_id={last_alter_id}")
-            xml = tally.fetch_ledger_cdc(company_name=company_name, last_alter_id=last_alter_id)
-
+            xml = tally.fetch_ledger_cdc(
+                company_name=company_name, last_alter_id=last_alter_id
+            )
             if not xml:
                 logger.info(f"[{company_name}][ledger] CDC: no new/changed ledgers")
                 return
 
             rows = parse_ledgers(xml, company_name)
             if not rows:
-                logger.info(f"[{company_name}][ledger] CDC: 0 rows (nothing changed since AlterID {last_alter_id})")
+                logger.info(
+                    f"[{company_name}][ledger] CDC: 0 rows "
+                    f"(nothing changed since AlterID {last_alter_id})"
+                )
                 return
 
             upsert_ledgers(rows, engine)
             new_max = _get_max_alter_id(rows)
             update_sync_state(company_name, 'ledger', new_max, engine, is_initial_done=True)
-            logger.info(f"[{company_name}][ledger] CDC done | rows={len(rows)} | new max_alter_id={new_max}")
+            logger.info(
+                f"[{company_name}][ledger] CDC done | rows={len(rows)} | new max_alter_id={new_max}"
+            )
             return
 
-        logger.info(f"[{company_name}][ledger] SNAPSHOT - fetching all ledgers for the first time")
+        logger.info(f"[{company_name}][ledger] SNAPSHOT — fetching all ledgers")
         xml = tally.fetch_ledgers(company_name=company_name)
-
         if not xml:
             logger.warning(f"[{company_name}][ledger] No ledger data from Tally")
             return
@@ -268,6 +297,7 @@ def _sync_ledgers(company_name: str, tally: TallyConnector, engine):
     except Exception:
         logger.exception(f"[{company_name}] Ledger sync failed")
 
+
 def _sync_voucher(
     company_name: str,
     config:       dict,
@@ -287,30 +317,28 @@ def _sync_voucher(
     logger.info(f"[{company_name}][{voucher_type}] Starting")
 
     try:
-
         state             = get_sync_state(company_name, voucher_type, engine)
         is_initial_done   = state.is_initial_done   if state else False
         last_alter_id     = state.last_alter_id     if state else 0
         last_synced_month = state.last_synced_month if state else None
 
+        # ── CDC mode (after first full snapshot) ──────────────────────────────
         if is_initial_done:
             logger.info(f"[{company_name}][{voucher_type}] CDC | last_alter_id={last_alter_id}")
 
-            t0 = datetime.now()
-
+            t0       = datetime.now()
             fetch_fn = getattr(tally, cdc_fetch)
             xml      = fetch_fn(company_name=company_name, last_alter_id=last_alter_id)
-
             fetch_ms = int((datetime.now() - t0).total_seconds() * 1000)
 
             if not xml:
-                logger.warning(f"[{company_name}][{voucher_type}] CDC: no response from Tally ({fetch_ms}ms)")
+                logger.warning(
+                    f"[{company_name}][{voucher_type}] CDC: no response from Tally ({fetch_ms}ms)"
+                )
                 return
 
             rows = parser(xml, company_name, parser_type_name)
-
             if not rows:
-
                 logger.info(
                     f"[{company_name}][{voucher_type}] CDC: nothing changed "
                     f"(fetch={fetch_ms}ms, 0 rows)"
@@ -330,6 +358,7 @@ def _sync_voucher(
             )
             return
 
+        # ── Snapshot mode (first run — chunked) ───────────────────────────────
         logger.info(
             f"[{company_name}][{voucher_type}] SNAPSHOT "
             f"({SNAPSHOT_CHUNK_MONTHS}-month chunks) | {from_date} → {to_date}"
@@ -345,22 +374,26 @@ def _sync_voucher(
         fetch_fn      = getattr(tally, snapshot_fetch)
         total_rows    = 0
         chunks_done   = 0
-
         all_alter_ids = [last_alter_id] if last_alter_id > 0 else []
 
         for chunk_from, chunk_to, month_str in _generate_chunks(from_date, to_date):
 
             if last_synced_month and month_str <= last_synced_month:
-                logger.debug(f"[{company_name}][{voucher_type}] Skipping already-done chunk {month_str}")
+                logger.debug(
+                    f"[{company_name}][{voucher_type}] Skipping already-done chunk {month_str}"
+                )
                 continue
 
-            logger.info(f"[{company_name}][{voucher_type}] Chunk {month_str} | {chunk_from} → {chunk_to}")
+            logger.info(
+                f"[{company_name}][{voucher_type}] Chunk {month_str} | {chunk_from} → {chunk_to}"
+            )
 
             xml = fetch_fn(company_name=company_name, from_date=chunk_from, to_date=chunk_to)
 
             if not xml:
-
-                logger.info(f"[{company_name}][{voucher_type}] Chunk {month_str}: empty response, advancing")
+                logger.info(
+                    f"[{company_name}][{voucher_type}] Chunk {month_str}: empty, advancing"
+                )
                 _mark_chunk_done(company_name, voucher_type, month_str, engine)
                 chunks_done += 1
                 continue
@@ -368,21 +401,23 @@ def _sync_voucher(
             rows = parser(xml, company_name, parser_type_name)
 
             if not rows:
-                logger.info(f"[{company_name}][{voucher_type}] Chunk {month_str}: 0 rows parsed, advancing")
+                logger.info(
+                    f"[{company_name}][{voucher_type}] Chunk {month_str}: 0 rows, advancing"
+                )
                 _mark_chunk_done(company_name, voucher_type, month_str, engine)
                 chunks_done += 1
                 continue
 
             chunk_max = max((int(r.get('alter_id', 0)) for r in rows), default=0)
             upsert_and_advance_month(
-                rows                = rows,
-                model_class         = model_class,
-                upsert_fn           = upsert_fn,
-                company_name        = company_name,
-                voucher_type        = voucher_type,
-                month_str           = month_str,
-                engine              = engine,
-                chunk_max_alter_id  = chunk_max,
+                rows               = rows,
+                model_class        = model_class,
+                upsert_fn          = upsert_fn,
+                company_name       = company_name,
+                voucher_type       = voucher_type,
+                month_str          = month_str,
+                engine             = engine,
+                chunk_max_alter_id = chunk_max,
             )
 
             all_alter_ids.extend(int(r.get('alter_id', 0)) for r in rows)
@@ -410,6 +445,9 @@ def _sync_voucher(
             f"will resume from last committed chunk on next run"
         )
 
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
 def sync_company(
     company:          dict,
     tally:            TallyConnector,
@@ -429,6 +467,7 @@ def sync_company(
 
     start_time = datetime.now()
 
+    # Ledgers and trial balance are always sequential (fast, no parallelism needed)
     _sync_ledgers(comp_name, tally, engine)
     _sync_trial_balance(comp_name, tally, engine, from_date, to_date)
 
@@ -453,10 +492,13 @@ def sync_company(
                 future.result()
                 logger.info(f"[{comp_name}][{vt}] Thread finished ✓")
             except Exception:
-                logger.error(f"[{comp_name}][{vt}] Thread raised an exception (other types continue)")
+                logger.error(
+                    f"[{comp_name}][{vt}] Thread raised an exception (other types continue)"
+                )
 
     elapsed = (datetime.now() - start_time).total_seconds()
     logger.info(f"[{comp_name}] Sync completed in {elapsed:.1f}s")
+
 
 def sync_all_companies(
     companies:        list,
@@ -470,7 +512,7 @@ def sync_all_companies(
         return
 
     invalid_names = {'', 'N/A', 'NA', 'NONE'}
-    valid = [c for c in companies if c.get('name', '').strip().upper() not in invalid_names]
+    valid   = [c for c in companies if c.get('name', '').strip().upper() not in invalid_names]
     skipped = len(companies) - len(valid)
     logger.info(f"Syncing {len(valid)} companies (skipped {skipped} invalid entries)")
 

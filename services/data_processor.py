@@ -1,18 +1,14 @@
 import xml.etree.ElementTree as ET
-import pandas as pd
 import re
 import traceback
 import time
 from datetime import datetime
 from logging_config import logger
 
-try:
-    from .currency_extractor import CurrencyExtractor
-except ImportError:
-    from currency_extractor import CurrencyExtractor
 
-currency_extractor = CurrencyExtractor(default_currency='INR')
-
+# ──────────────────────────────────────────────────────────────────────────────
+# Timer utility
+# ──────────────────────────────────────────────────────────────────────────────
 
 class ProcessingTimer:
     def __init__(self, process_name):
@@ -30,6 +26,10 @@ class ProcessingTimer:
         elapsed = self.end_time - self.start_time
         logger.info(f"Completed: {self.process_name} - Time taken: {elapsed:.2f} seconds")
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Text / XML helpers
+# ──────────────────────────────────────────────────────────────────────────────
 
 def clean_text(text):
     if not text:
@@ -53,31 +53,27 @@ def sanitize_xml_content(content):
     content = str(content)
     content = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', content)
     content = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;|#\d+;)', '&amp;', content)
-
     return content
 
 
-def extract_numeric_amount(text):
-    if not text:
-        return "0"
+def convert_to_float(value):
+    if value is None or value == "":
+        return 0.0
+    try:
+        return float(str(value).replace(',', '').strip())
+    except Exception:
+        return 0.0
 
-    text = str(text)
-    final_amount_match = re.search(r'=\s*[?]?\s*[-]?(\d+\.?\d*)', text)
-    if final_amount_match:
-        return final_amount_match.group(1)
 
-    numeric_match = re.search(r'[-]?(\d+\.?\d*)', text)
-    if numeric_match:
-        return numeric_match.group(1)
-
-    return "0"
-
+# ──────────────────────────────────────────────────────────────────────────────
+# Date helpers
+# ──────────────────────────────────────────────────────────────────────────────
 
 def parse_tally_date_formatted(date_str):
     if not date_str or date_str.strip() == "":
         return None
     try:
-        return datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d')
+        return datetime.strptime(date_str.strip(), '%Y%m%d').strftime('%Y-%m-%d')
     except Exception:
         return None
 
@@ -85,9 +81,7 @@ def parse_tally_date_formatted(date_str):
 def parse_expiry_date(exp_date_text):
     if not exp_date_text or exp_date_text.strip() == "":
         return ""
-
     exp_date_text = str(exp_date_text).strip()
-
     try:
         for fmt in ['%d-%b-%y', '%d-%b-%Y']:
             try:
@@ -99,36 +93,155 @@ def parse_expiry_date(exp_date_text):
         return exp_date_text
 
 
-def convert_to_float(value):
-    if value is None or value == "":
+# ──────────────────────────────────────────────────────────────────────────────
+# FCY-aware amount / rate parsers
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# Tally FCY strings look like:
+#   RATE  : "$14.00 = ? 14.00/box"
+#   AMOUNT: "$61600.00 @ ? 1/$ = ? 61600.00"
+#           "-$61600.00 @ ? 1/$ = -? 61600.00"   ← ledger (negative) side
+#
+# Strategy
+# ─────────
+#   • Rate   → take the number immediately before "/unit"
+#   • Amount → take the FIRST numeric value (the FCY amount Tally prints first)
+#   • Exchange rate → look for the "? <n>/<symbol>" pattern Tally embeds
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Currency symbols Tally uses in FCY strings
+_CURRENCY_SYMBOLS = r'[\$€£¥₹₨₩₱₽₺₪₦฿₫]'
+
+# Map of symbol → ISO code
+_SYMBOL_TO_ISO = {
+    '$': 'USD', '€': 'EUR', '£': 'GBP', '¥': 'JPY',
+    '₹': 'INR', '₨': 'INR', '₩': 'KRW', '₱': 'PHP',
+    '₽': 'RUB', '₺': 'TRY', '₪': 'ILS', '₦': 'NGN',
+    '฿': 'THB', '₫': 'VND',
+}
+
+
+def _detect_currency(text: str) -> str:
+    """Return ISO currency code from a Tally amount/rate string. Defaults to INR."""
+    if not text:
+        return 'INR'
+    for sym, iso in _SYMBOL_TO_ISO.items():
+        if sym in text and iso != 'INR':
+            return iso
+    return 'INR'
+
+
+def _parse_fcy_rate(raw: str) -> float:
+    """
+    Extract per-unit rate from Tally RATE field.
+
+    "$14.00 = ? 14.00/box"  → 14.0
+    "14.00/box"             → 14.0
+    "14.00"                 → 14.0
+    """
+    if not raw:
         return 0.0
-    try:
-        return abs(float(value))
-    except Exception:
+    raw = str(raw).strip()
+
+    # Number immediately before /unit  e.g. 14.00/box
+    m = re.search(r'(-?[\d,]+\.?\d*)\s*/\s*\w', raw)
+    if m:
+        return abs(convert_to_float(m.group(1)))
+
+    # Fallback: first number in string
+    m = re.search(r'(-?[\d,]+\.?\d*)', raw)
+    if m:
+        return abs(convert_to_float(m.group(1)))
+
+    return 0.0
+
+
+def _parse_fcy_amount(raw: str) -> float:
+    """
+    Extract the FCY (foreign currency) amount from a Tally AMOUNT field.
+    Always returns an absolute value — sign is handled by the caller.
+
+    "$61600.00 @ ? 1/$ = ? 61600.00"    → 61600.0
+    "-$61600.00 @ ? 1/$ = -? 61600.00"  → 61600.0
+    "61600.00"                           → 61600.0
+    """
+    if not raw:
         return 0.0
+    raw = str(raw).strip()
+
+    # First number after optional '-' and optional currency symbol
+    m = re.search(r'-?\s*' + _CURRENCY_SYMBOLS + r'?\s*([\d,]+\.?\d*)', raw)
+    if m:
+        return abs(convert_to_float(m.group(1)))
+
+    # Fallback: just first number
+    m = re.search(r'([\d,]+\.?\d*)', raw)
+    if m:
+        return abs(convert_to_float(m.group(1)))
+
+    return 0.0
 
 
-def extract_unit_from_rate(rate_text):
-    if not rate_text:
-        return ""
-    match = re.search(r'/\s*(\w+)\s*$', str(rate_text))
-    return match.group(1) if match else ""
+def _parse_fcy_exchange_rate(raw_amount: str) -> float:
+    """
+    Extract exchange rate embedded in Tally FCY amount string.
+
+    "$61600.00 @ ? 1/$ = ? 61600.00"  → 1.0   (1 home-unit per $)
+    "$615.00 @ ? 84.5/$ = ? 51997.50" → 84.5
+    Returns 1.0 if not found.
+    """
+    if not raw_amount:
+        return 1.0
+    # Pattern: ? <number>/<currency-symbol>
+    m = re.search(r'\?\s*([\d,]+\.?\d*)\s*/' + _CURRENCY_SYMBOLS, raw_amount)
+    if m:
+        rate = convert_to_float(m.group(1))
+        return rate if rate > 0 else 1.0
+    return 1.0
 
 
-def parse_quantity_with_unit(qty_text):
-    if not qty_text:
-        return (0.0, "")
+def _is_fcy_string(text: str) -> bool:
+    """True if the text contains a foreign-currency symbol (not INR/?)."""
+    if not text:
+        return False
+    for sym in _SYMBOL_TO_ISO:
+        if sym in text and _SYMBOL_TO_ISO[sym] != 'INR':
+            return True
+    return False
 
-    qty_text = str(qty_text).strip()
-    match = re.match(r'[-]?(\d+\.?\d*)\s*(\w*)', qty_text)
-    if match:
-        qty  = convert_to_float(match.group(1))
-        unit = match.group(2) if match.group(2) else ""
-        return (qty, unit)
-    return (0.0, "")
+
+def extract_numeric_amount(text):
+    """
+    Legacy helper kept for backward-compat (used in trial-balance / total_amt).
+    For FCY vouchers, prefer _parse_fcy_amount() directly.
+    """
+    if not text:
+        return "0"
+    text = str(text)
+
+    # Tally FCY: prefer the FIRST numeric value (foreign amount)
+    if _is_fcy_string(text):
+        m = re.search(r'-?\s*' + _CURRENCY_SYMBOLS + r'?\s*([\d,]+\.?\d*)', text)
+        if m:
+            return m.group(1)
+
+    # For plain / INR: take value after '= ?' pattern (base currency)
+    m = re.search(r'=\s*[?]?\s*[-]?(\d+\.?\d*)', text)
+    if m:
+        return m.group(1)
+
+    m = re.search(r'[-]?(\d+\.?\d*)', text)
+    if m:
+        return m.group(1)
+
+    return "0"
 
 
 def extract_currency_and_values(rate_text=None, amount_text=None, discount_text=None):
+    """
+    Unified FCY-aware extractor for rate, amount, discount, currency, exchange_rate.
+    Works for both INR (plain) and FCY (foreign currency) vouchers.
+    """
     result = {
         'currency'     : 'INR',
         'rate'         : 0.0,
@@ -137,90 +250,67 @@ def extract_currency_and_values(rate_text=None, amount_text=None, discount_text=
         'exchange_rate': 1.0,
     }
 
-    detected_currency = 'INR'
+    # Detect currency from either field
+    detected = 'INR'
+    for txt in (amount_text, rate_text):
+        c = _detect_currency(txt or '')
+        if c != 'INR':
+            detected = c
+            break
+    result['currency'] = detected
 
-    if rate_text:
-        rate_currency = currency_extractor.extract_currency(rate_text)
-        if rate_currency and rate_currency != 'INR':
-            detected_currency = rate_currency
-
-    if amount_text:
-        amount_currency = currency_extractor.extract_currency(amount_text)
-        if amount_currency and amount_currency != 'INR':
-            detected_currency = amount_currency
-
-    if detected_currency == 'INR':
-        foreign_pattern = r'[?€$£¥]\s*@\s*[?€$£¥].*?/\s*[?€$£¥]\s*='
-        if (amount_text and re.search(foreign_pattern, amount_text)) or \
-           (rate_text and re.search(r'[?€$£¥]\s*=\s*[?€$£¥]', rate_text)):
-            if '€' in str(amount_text) or '€' in str(rate_text) or 'EUR' in str(amount_text).upper():
-                detected_currency = 'EUR'
-            elif '$' in str(amount_text) or '$' in str(rate_text) or 'USD' in str(amount_text).upper():
-                detected_currency = 'USD'
-            elif '£' in str(amount_text) or '£' in str(rate_text) or 'GBP' in str(amount_text).upper():
-                detected_currency = 'GBP'
-            elif '?' in str(amount_text) or '?' in str(rate_text):
-                detected_currency = 'EUR'
-
-    result['currency'] = detected_currency
-
-    if detected_currency == 'INR':
+    if detected == 'INR':
+        # Plain INR voucher — use legacy numeric extraction
         result['exchange_rate'] = 1.0
-
         if rate_text:
-            result['rate'] = convert_to_float(extract_numeric_amount(rate_text))
-
+            result['rate'] = abs(convert_to_float(extract_numeric_amount(rate_text)))
         if amount_text:
-            result['amount'] = convert_to_float(extract_numeric_amount(amount_text))
-
+            result['amount'] = abs(convert_to_float(extract_numeric_amount(amount_text)))
         if discount_text:
-            result['discount'] = convert_to_float(extract_numeric_amount(discount_text))
-
+            result['discount'] = abs(convert_to_float(extract_numeric_amount(discount_text)))
     else:
+        # FCY voucher — use dedicated FCY parsers
         if amount_text:
-            amount_details = currency_extractor.extract_foreign_currency_details(amount_text)
-
-            if amount_details['foreign_amount']:
-                result['amount'] = abs(amount_details['foreign_amount'])
-
-            if amount_details['exchange_rate']:
-                result['exchange_rate'] = amount_details['exchange_rate']
-
-            if not result['exchange_rate'] or result['exchange_rate'] == 1.0:
-                fallback_pattern = r'[-]?(\d+\.?\d*)\s*[€$£¥?]\s*@\s*[€$£¥?]\s*[-]?(\d+\.?\d*)\s*/\s*[€$£¥?]'
-                fallback_match = re.search(fallback_pattern, amount_text)
-                if fallback_match:
-                    if not result['amount']:
-                        result['amount'] = convert_to_float(fallback_match.group(1))
-                    result['exchange_rate'] = convert_to_float(fallback_match.group(2))
+            result['amount']        = _parse_fcy_amount(amount_text)
+            result['exchange_rate'] = _parse_fcy_exchange_rate(amount_text)
 
         if rate_text:
-            rate_details = currency_extractor.extract_foreign_currency_details(rate_text)
+            result['rate'] = _parse_fcy_rate(rate_text)
 
-            if rate_details['foreign_amount']:
-                result['rate'] = abs(rate_details['foreign_amount'])
-
-            if not result['rate']:
-                rate_fallback_match = re.search(r'[-]?(\d+\.?\d*)\s*[€$£¥?]\s*=', rate_text)
-                if rate_fallback_match:
-                    result['rate'] = convert_to_float(rate_fallback_match.group(1))
-
-            if not result['exchange_rate'] or result['exchange_rate'] == 1.0:
-                if rate_details['foreign_amount'] and rate_details['base_amount']:
-                    foreign_val = abs(rate_details['foreign_amount'])
-                    inr_val     = abs(rate_details['base_amount'])
-                    if foreign_val:
-                        result['exchange_rate'] = inr_val / foreign_val
+            # If exchange rate still at default, try deriving from rate string
+            if result['exchange_rate'] == 1.0:
+                exr = _parse_fcy_exchange_rate(rate_text)
+                if exr != 1.0:
+                    result['exchange_rate'] = exr
 
         if discount_text:
-            discount_details = currency_extractor.extract_foreign_currency_details(discount_text)
-            if discount_details['foreign_amount']:
-                result['discount'] = abs(discount_details['foreign_amount'])
-            else:
-                result['discount'] = convert_to_float(extract_numeric_amount(discount_text))
+            result['discount'] = _parse_fcy_amount(discount_text)
 
     return result
 
+
+def extract_unit_from_rate(rate_text):
+    """Extract unit string from rate text e.g. '14.00/box' → 'box'."""
+    if not rate_text:
+        return ""
+    match = re.search(r'/\s*(\w+)\s*$', str(rate_text))
+    return match.group(1) if match else ""
+
+
+def parse_quantity_with_unit(qty_text):
+    """Parse '4400 box' → (4400.0, 'box')."""
+    if not qty_text:
+        return (0.0, "")
+    qty_text = str(qty_text).strip()
+    match = re.match(r'[-]?(\d+\.?\d*)\s*(\w*)', qty_text)
+    if match:
+        return (convert_to_float(match.group(1)), match.group(2) if match.group(2) else "")
+    return (0.0, "")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Ledger voucher parser  (Receipt / Payment / Journal / Contra)
+# ──────────────────────────────────────────────────────────────────────────────
 
 def parse_ledger_voucher(xml_content, company_name: str, voucher_type_name: str = 'ledger') -> list:
     try:
@@ -261,8 +351,7 @@ def parse_ledger_voucher(xml_content, company_name: str, voucher_type_name: str 
             if not ledger_entries:
                 ledger_entries = voucher.findall('.//LEDGERENTRIES.LIST')
 
-            # Deleted vouchers from CDC have no entries — emit a stub row so
-            # the upsert layer can mark the existing DB record as deleted.
+            # Deleted vouchers from CDC arrive with no entries — emit a stub row
             if not ledger_entries and is_deleted_flag == 'Yes':
                 all_rows.append({
                     'company_name'  : company_name,
@@ -284,15 +373,15 @@ def parse_ledger_voucher(xml_content, company_name: str, voucher_type_name: str 
                 })
                 continue
 
+            # Detect voucher-level FCY from any entry that has it
             voucher_exchange_rate = 1.0
             voucher_currency      = 'INR'
-
             for ledger in ledger_entries:
-                amount_text   = clean_text(ledger.findtext('AMOUNT', '0'))
-                temp_currency = extract_currency_and_values(None, amount_text)
-                if temp_currency['currency'] != 'INR' and temp_currency['exchange_rate'] > 1.0:
-                    voucher_exchange_rate = temp_currency['exchange_rate']
-                    voucher_currency      = temp_currency['currency']
+                amount_text = clean_text(ledger.findtext('AMOUNT', '0'))
+                temp        = extract_currency_and_values(None, amount_text)
+                if temp['currency'] != 'INR':
+                    voucher_currency      = temp['currency']
+                    voucher_exchange_rate = temp['exchange_rate']
                     break
 
             for ledger in ledger_entries:
@@ -300,12 +389,15 @@ def parse_ledger_voucher(xml_content, company_name: str, voucher_type_name: str 
                 amount_text   = clean_text(ledger.findtext('AMOUNT', '0'))
                 currency_info = extract_currency_and_values(None, amount_text)
 
-                if currency_info['exchange_rate'] == 1.0 and voucher_exchange_rate > 1.0:
-                    currency_info['exchange_rate'] = voucher_exchange_rate
+                # Propagate voucher-level FCY if this entry didn't resolve its own
+                if currency_info['currency'] == 'INR' and voucher_currency != 'INR':
                     currency_info['currency']      = voucher_currency
+                    currency_info['exchange_rate'] = voucher_exchange_rate
 
-                amount_type     = 'Debit' if currency_info['amount'] < 0 else 'Credit'
-                absolute_amount = abs(currency_info['amount'])
+                # Determine Dr/Cr from raw amount sign
+                raw_sign    = str(amount_text).strip()
+                is_negative = raw_sign.startswith('-')
+                amount_type = 'Debit' if is_negative else 'Credit'
 
                 all_rows.append({
                     'company_name'  : company_name,
@@ -314,7 +406,7 @@ def parse_ledger_voucher(xml_content, company_name: str, voucher_type_name: str 
                     'voucher_number': voucher_number,
                     'reference'     : reference,
                     'ledger_name'   : ledger_name,
-                    'amount'        : absolute_amount,
+                    'amount'        : currency_info['amount'],
                     'amount_type'   : amount_type,
                     'currency'      : currency_info['currency'],
                     'exchange_rate' : currency_info['exchange_rate'],
@@ -337,6 +429,10 @@ def parse_ledger_voucher(xml_content, company_name: str, voucher_type_name: str 
         logger.error(traceback.format_exc())
         return []
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Inventory voucher parser  (Sales / Purchase / Credit Note / Debit Note)
+# ──────────────────────────────────────────────────────────────────────────────
 
 def parse_inventory_voucher(xml_content, company_name: str, voucher_type_name: str = 'inventory') -> list:
     try:
@@ -377,84 +473,56 @@ def parse_inventory_voucher(xml_content, company_name: str, voucher_type_name: s
             change_status   = 'Deleted' if is_deleted == 'Yes' else action
             is_deleted_flag = 'Yes' if change_status in ('Deleted', 'Delete') else 'No'
 
-            ledger_entries    = voucher.findall('.//ALLLEDGERENTRIES.LIST') or voucher.findall('.//LEDGERENTRIES.LIST')
-            inventory_entries = voucher.findall('.//ALLINVENTORYENTRIES.LIST') or voucher.findall('.//INVENTORYENTRIES.LIST')
+            ledger_entries    = (voucher.findall('.//ALLLEDGERENTRIES.LIST') or
+                                 voucher.findall('.//LEDGERENTRIES.LIST'))
+            inventory_entries = (voucher.findall('.//ALLINVENTORYENTRIES.LIST') or
+                                 voucher.findall('.//INVENTORYENTRIES.LIST'))
 
-            # Deleted vouchers from CDC arrive with no entries — emit a stub row
-            # so the upsert layer can mark ALL existing DB rows for this guid deleted.
+            # Deleted CDC stub — emit a single row so DB can mark it deleted
             if is_deleted_flag == 'Yes' and not ledger_entries and not inventory_entries:
-                all_rows.append({
-                    'company_name'    : company_name,
-                    'date'            : parse_tally_date_formatted(date),
-                    'voucher_number'  : voucher_number,
-                    'reference'       : reference,
-                    'voucher_type'    : voucher_type,
-                    'party_name'      : party_name,
-                    'gst_number'      : party_gstin,
-                    'e_invoice_number': irn_number,
-                    'eway_bill'       : eway_bill,
-                    'item_name'       : '',
-                    'quantity'        : 0.0,
-                    'unit'            : '',
-                    'alt_qty'         : 0.0,
-                    'alt_unit'        : '',
-                    'batch_no'        : '',
-                    'mfg_date'        : '',
-                    'exp_date'        : '',
-                    'hsn_code'        : '',
-                    'gst_rate'        : 0.0,
-                    'rate'            : 0.0,
-                    'amount'          : 0.0,
-                    'discount'        : 0.0,
-                    'cgst_amt'        : 0.0,
-                    'sgst_amt'        : 0.0,
-                    'igst_amt'        : 0.0,
-                    'freight_amt'     : 0.0,
-                    'dca_amt'         : 0.0,
-                    'cf_amt'          : 0.0,
-                    'other_amt'       : 0.0,
-                    'total_amt'       : 0.0,
-                    'currency'        : 'INR',
-                    'exchange_rate'   : 1.0,
-                    'narration'       : narration,
-                    'guid'            : guid,
-                    'alter_id'        : int(alter_id) if alter_id else 0,
-                    'master_id'       : master_id,
-                    'change_status'   : change_status,
-                    'is_deleted'      : 'Yes',
-                })
+                all_rows.append(_deleted_inventory_stub(
+                    company_name, date, voucher_number, reference, voucher_type,
+                    party_name, party_gstin, irn_number, eway_bill,
+                    narration, guid, alter_id, master_id, change_status,
+                ))
                 continue
 
-            voucher_exchange_rate = 1.0
+            # ── Detect voucher-level FCY ───────────────────────────────────────
             voucher_currency      = 'INR'
+            voucher_exchange_rate = 1.0
 
+            # Check ledger entries first (party ledger has the total amount)
             for ledger in ledger_entries:
-                amount_text   = clean_text(ledger.findtext('AMOUNT', '0'))
-                temp_currency = extract_currency_and_values(None, amount_text)
-                if temp_currency['currency'] != 'INR' and temp_currency['exchange_rate'] > 1.0:
-                    voucher_exchange_rate = temp_currency['exchange_rate']
-                    voucher_currency      = temp_currency['currency']
+                amt_txt = clean_text(ledger.findtext('AMOUNT', '0'))
+                tmp     = extract_currency_and_values(None, amt_txt)
+                if tmp['currency'] != 'INR':
+                    voucher_currency      = tmp['currency']
+                    voucher_exchange_rate = tmp['exchange_rate']
                     break
 
-            if voucher_exchange_rate == 1.0:
+            # Fall back to inventory entries if ledger didn't reveal it
+            if voucher_currency == 'INR':
                 for inv in inventory_entries:
                     rate_elem   = inv.find('RATE')
                     amount_elem = inv.find('AMOUNT')
-                    rate_text   = clean_text(rate_elem.text if rate_elem is not None and rate_elem.text else '0')
-                    amount_text = clean_text(amount_elem.text if amount_elem is not None and amount_elem.text else '0')
-                    temp_cur    = extract_currency_and_values(rate_text, amount_text, None)
-                    if temp_cur['currency'] != 'INR' and temp_cur['exchange_rate'] > 1.0:
-                        voucher_exchange_rate = temp_cur['exchange_rate']
-                        voucher_currency      = temp_cur['currency']
+                    r_txt = clean_text(rate_elem.text   if rate_elem   is not None and rate_elem.text   else '0')
+                    a_txt = clean_text(amount_elem.text if amount_elem is not None and amount_elem.text else '0')
+                    tmp   = extract_currency_and_values(r_txt, a_txt)
+                    if tmp['currency'] != 'INR':
+                        voucher_currency      = tmp['currency']
+                        voucher_exchange_rate = tmp['exchange_rate']
                         break
 
-            # Get total_amt directly from party ledger in XML
+            # ── Total amount from party ledger (for total_amt column) ──────────
             total_amt_from_xml = 0.0
             for ledger in ledger_entries:
                 if clean_text(ledger.findtext('ISPARTYLEDGER', 'No')) == 'Yes':
-                    total_amt_from_xml = convert_to_float(extract_numeric_amount(clean_text(ledger.findtext('AMOUNT', '0'))))
+                    total_amt_from_xml = _parse_fcy_amount(
+                        clean_text(ledger.findtext('AMOUNT', '0'))
+                    )
                     break
 
+            # ── Aggregate GST / charges from ledger entries ────────────────────
             voucher_gst_data = {
                 'cgst_total': 0.0, 'sgst_total': 0.0, 'igst_total': 0.0,
                 'cgst_rate' : 0.0, 'sgst_rate' : 0.0, 'igst_rate' : 0.0,
@@ -465,74 +533,95 @@ def parse_inventory_voucher(xml_content, company_name: str, voucher_type_name: s
             }
 
             for ledger in ledger_entries:
-                ledger_name       = clean_text(ledger.findtext('LEDGERNAME', ''))
-                ledger_name_lower = ledger_name.lower()
-                amount_text       = clean_text(ledger.findtext('AMOUNT', '0'))
-                amount            = convert_to_float(extract_numeric_amount(amount_text))
+                ledger_name_raw   = clean_text(ledger.findtext('LEDGERNAME', ''))
+                ledger_name_lower = ledger_name_raw.lower()
+                amt_text          = clean_text(ledger.findtext('AMOUNT', '0'))
+                # For GST / charge amounts always use the absolute INR-equivalent
+                amount            = abs(convert_to_float(extract_numeric_amount(amt_text)))
 
                 if re.search(r'cgst|c\.gst', ledger_name_lower) and re.search(r'input|output', ledger_name_lower):
                     voucher_gst_data['cgst_total'] += amount
-                    rate_match = re.search(r'@\s*(\d+\.?\d*)\s*%?', ledger_name)
-                    if rate_match and voucher_gst_data['cgst_rate'] == 0.0:
-                        voucher_gst_data['cgst_rate'] = convert_to_float(rate_match.group(1))
+                    m = re.search(r'@\s*(\d+\.?\d*)\s*%?', ledger_name_raw)
+                    if m and voucher_gst_data['cgst_rate'] == 0.0:
+                        voucher_gst_data['cgst_rate'] = convert_to_float(m.group(1))
+
                 elif re.search(r'sgst|s\.gst', ledger_name_lower) and re.search(r'input|output', ledger_name_lower):
                     voucher_gst_data['sgst_total'] += amount
-                    rate_match = re.search(r'@\s*(\d+\.?\d*)\s*%?', ledger_name)
-                    if rate_match and voucher_gst_data['sgst_rate'] == 0.0:
-                        voucher_gst_data['sgst_rate'] = convert_to_float(rate_match.group(1))
+                    m = re.search(r'@\s*(\d+\.?\d*)\s*%?', ledger_name_raw)
+                    if m and voucher_gst_data['sgst_rate'] == 0.0:
+                        voucher_gst_data['sgst_rate'] = convert_to_float(m.group(1))
+
                 elif re.search(r'igst|i\.gst', ledger_name_lower) and re.search(r'input|output', ledger_name_lower):
                     voucher_gst_data['igst_total'] += amount
-                    rate_match = re.search(r'@\s*(\d+\.?\d*)\s*%?', ledger_name)
-                    if rate_match and voucher_gst_data['igst_rate'] == 0.0:
-                        voucher_gst_data['igst_rate'] = convert_to_float(rate_match.group(1))
+                    m = re.search(r'@\s*(\d+\.?\d*)\s*%?', ledger_name_raw)
+                    if m and voucher_gst_data['igst_rate'] == 0.0:
+                        voucher_gst_data['igst_rate'] = convert_to_float(m.group(1))
+
                 elif re.search(r'freight', ledger_name_lower):
                     voucher_charges['freight_amt'] += amount
-                elif re.search(r'dca', ledger_name_lower):
+
+                elif re.search(r'\bdca\b', ledger_name_lower):
                     voucher_charges['dca_amt'] += amount
-                elif re.search(r'clearing[\s&amp;]+forwarding', ledger_name_lower) or re.search(r'clearing\s*&\s*forwarding', ledger_name_lower):
+
+                elif re.search(r'clearing\s*[&]\s*forwarding|clearing\s+forwarding', ledger_name_lower):
                     voucher_charges['cf_amt'] += amount
+
                 elif clean_text(ledger.findtext('ISPARTYLEDGER', 'No')) != 'Yes':
-                    # Only truly unknown/uncategorized non-GST, non-party ledgers go into other_amt
+                    # Unknown non-GST, non-party ledger → other charges
                     voucher_charges['other_amt'] += amount
 
-            has_real_inventory = False
-            if inventory_entries:
-                for inv in inventory_entries:
-                    item_name   = clean_text(inv.findtext('STOCKITEMNAME', ''))
-                    amount_elem = inv.find('AMOUNT')
-                    amount_text = clean_text(amount_elem.text if amount_elem is not None and amount_elem.text else '0')
-                    if item_name and convert_to_float(extract_numeric_amount(amount_text)) > 0.01:
-                        has_real_inventory = True
-                        break
+            # ── Inventory line items ───────────────────────────────────────────
+            has_real_inventory = any(
+                clean_text(inv.findtext('STOCKITEMNAME', ''))
+                and _parse_fcy_amount(
+                    clean_text((inv.find('AMOUNT').text if inv.find('AMOUNT') is not None else ''))
+                ) > 0.01
+                for inv in inventory_entries
+            )
 
             temp_item_data    = []
             total_item_amount = 0.0
 
             if has_real_inventory:
                 for inv in inventory_entries:
-                    item_name       = clean_text(inv.findtext('STOCKITEMNAME', ''))
+                    item_name = clean_text(inv.findtext('STOCKITEMNAME', ''))
+                    if not item_name:
+                        continue
+
+                    # Raw text from XML elements
                     qty_elem        = inv.find('ACTUALQTY')
+                    billed_qty_elem = inv.find('BILLEDQTY')
                     rate_elem       = inv.find('RATE')
                     amount_elem     = inv.find('AMOUNT')
                     discount_elem   = inv.find('DISCOUNT')
-                    billed_qty_elem = inv.find('BILLEDQTY')
 
-                    qty           = clean_text(qty_elem.text if qty_elem is not None and qty_elem.text else '0')
-                    rate_text     = clean_text(rate_elem.text if rate_elem is not None and rate_elem.text else '0')
-                    amount_text   = clean_text(amount_elem.text if amount_elem is not None and amount_elem.text else '0')
-                    discount_text = clean_text(discount_elem.text if discount_elem is not None and discount_elem.text else '0')
-                    billed_qty    = clean_text(billed_qty_elem.text if billed_qty_elem is not None and billed_qty_elem.text else '0')
+                    qty_txt      = clean_text(qty_elem.text        if qty_elem        is not None and qty_elem.text        else '0')
+                    billed_txt   = clean_text(billed_qty_elem.text if billed_qty_elem is not None and billed_qty_elem.text else '0')
+                    rate_txt     = clean_text(rate_elem.text        if rate_elem       is not None and rate_elem.text        else '0')
+                    amount_txt   = clean_text(amount_elem.text      if amount_elem     is not None and amount_elem.text      else '0')
+                    discount_txt = clean_text(discount_elem.text    if discount_elem   is not None and discount_elem.text    else '0')
 
-                    unit              = extract_unit_from_rate(rate_text)
-                    alt_qty, alt_unit = parse_quantity_with_unit(billed_qty)
+                    # ── KEY FIX: use FCY-aware parsers ────────────────────────
+                    currency_data = extract_currency_and_values(rate_txt, amount_txt, discount_txt)
 
+                    # Propagate voucher-level FCY if item-level didn't resolve
+                    if currency_data['currency'] == 'INR' and voucher_currency != 'INR':
+                        currency_data['currency']      = voucher_currency
+                        currency_data['exchange_rate'] = voucher_exchange_rate
+
+                    # Quantity & unit
+                    qty_numeric        = convert_to_float(re.search(r'[\d,]+\.?\d*', qty_txt).group() if re.search(r'[\d,]+\.?\d*', qty_txt) else '0')
+                    alt_qty, alt_unit  = parse_quantity_with_unit(billed_txt)
+                    unit               = extract_unit_from_rate(rate_txt) or alt_unit
+
+                    # Batch / MFG / EXP
                     batch_no = mfg_date = exp_date = ''
                     batch_allocations = inv.findall('.//BATCHALLOCATIONS.LIST')
                     if batch_allocations:
                         batch    = batch_allocations[0]
                         batch_no = clean_text(batch.findtext('BATCHNAME', ''))
                         mfg_raw  = clean_text(batch.findtext('MFDON', ''))
-                        mfg_date = parse_tally_date_formatted(mfg_raw) if mfg_raw else ''
+                        mfg_date = parse_tally_date_formatted(mfg_raw) or ''
                         exp_elem = batch.find('EXPIRYPERIOD')
                         if exp_elem is not None:
                             if exp_elem.text:
@@ -541,18 +630,13 @@ def parse_inventory_voucher(xml_content, company_name: str, voucher_type_name: s
                             if exp_jd and not exp_date:
                                 exp_date = parse_tally_date_formatted(exp_jd) or ''
 
+                    # HSN code
                     hsn_code = ''
-                    for acc_alloc in inv.findall('.//ACCOUNTINGALLOCATIONS.LIST'):
-                        hsn_code = clean_text(acc_alloc.findtext('GSTHSNSACCODE', ''))
+                    for acc in inv.findall('.//ACCOUNTINGALLOCATIONS.LIST'):
+                        hsn_code = clean_text(acc.findtext('GSTHSNSACCODE', ''))
                         if hsn_code:
                             break
 
-                    currency_data = extract_currency_and_values(rate_text, amount_text, discount_text)
-                    if currency_data['exchange_rate'] == 1.0 and voucher_exchange_rate > 1.0:
-                        currency_data['exchange_rate'] = voucher_exchange_rate
-                        currency_data['currency']      = voucher_currency
-
-                    qty_numeric        = convert_to_float(extract_numeric_amount(qty))
                     item_amount        = currency_data['amount']
                     total_item_amount += item_amount
 
@@ -566,14 +650,17 @@ def parse_inventory_voucher(xml_content, company_name: str, voucher_type_name: s
                         'mfg_date'     : mfg_date,
                         'exp_date'     : exp_date,
                         'hsn_code'     : hsn_code,
-                        'rate'         : currency_data['rate'],
-                        'amount'       : item_amount,
+                        'rate'         : currency_data['rate'],     # ✅ FCY rate
+                        'amount'       : item_amount,               # ✅ FCY amount
                         'discount'     : currency_data['discount'],
                         'currency'     : currency_data['currency'],
                         'exchange_rate': currency_data['exchange_rate'],
                     })
 
-            gst_rate = voucher_gst_data['cgst_rate'] + voucher_gst_data['sgst_rate'] + voucher_gst_data['igst_rate']
+            # ── Build output rows ──────────────────────────────────────────────
+            gst_rate = (voucher_gst_data['cgst_rate']
+                        + voucher_gst_data['sgst_rate']
+                        + voucher_gst_data['igst_rate'])
 
             base = {
                 'company_name'    : company_name,
@@ -594,6 +681,7 @@ def parse_inventory_voucher(xml_content, company_name: str, voucher_type_name: s
             }
 
             if not temp_item_data or total_item_amount == 0:
+                # No inventory items parsed — emit a summary row
                 all_rows.append({
                     **base,
                     'item_name'    : 'No Item',
@@ -621,7 +709,6 @@ def parse_inventory_voucher(xml_content, company_name: str, voucher_type_name: s
                     'exchange_rate': voucher_exchange_rate,
                 })
             else:
-                voucher_total = total_amt_from_xml
                 for idx, item in enumerate(temp_item_data):
                     proportion = item['amount'] / total_item_amount if total_item_amount else 0
                     all_rows.append({
@@ -639,14 +726,17 @@ def parse_inventory_voucher(xml_content, company_name: str, voucher_type_name: s
                         'rate'         : item['rate'],
                         'amount'       : item['amount'],
                         'discount'     : item['discount'],
+                        # GST & charges distributed proportionally across items
                         'cgst_amt'     : voucher_gst_data['cgst_total'] * proportion,
                         'sgst_amt'     : voucher_gst_data['sgst_total'] * proportion,
                         'igst_amt'     : voucher_gst_data['igst_total'] * proportion,
+                        # Charges only on first item to avoid double-counting
                         'freight_amt'  : voucher_charges['freight_amt'] if idx == 0 else 0.0,
-                        'dca_amt'      : voucher_charges['dca_amt'] if idx == 0 else 0.0,
-                        'cf_amt'       : voucher_charges['cf_amt'] if idx == 0 else 0.0,
-                        'other_amt'    : voucher_charges['other_amt'] if idx == 0 else 0.0,
-                        'total_amt'    : voucher_total if idx == 0 else 0.0,
+                        'dca_amt'      : voucher_charges['dca_amt']     if idx == 0 else 0.0,
+                        'cf_amt'       : voucher_charges['cf_amt']      if idx == 0 else 0.0,
+                        'other_amt'    : voucher_charges['other_amt']   if idx == 0 else 0.0,
+                        # total_amt only on first item row (it's a voucher-level value)
+                        'total_amt'    : total_amt_from_xml if idx == 0 else 0.0,
                         'currency'     : item['currency'],
                         'exchange_rate': item['exchange_rate'],
                     })
@@ -662,6 +752,58 @@ def parse_inventory_voucher(xml_content, company_name: str, voucher_type_name: s
         logger.error(traceback.format_exc())
         return []
 
+
+def _deleted_inventory_stub(
+    company_name, date, voucher_number, reference, voucher_type,
+    party_name, party_gstin, irn_number, eway_bill,
+    narration, guid, alter_id, master_id, change_status,
+) -> dict:
+    """Return a zeroed stub row used to mark a voucher deleted in the DB."""
+    return {
+        'company_name'    : company_name,
+        'date'            : parse_tally_date_formatted(date),
+        'voucher_number'  : voucher_number,
+        'reference'       : reference,
+        'voucher_type'    : voucher_type,
+        'party_name'      : party_name,
+        'gst_number'      : party_gstin,
+        'e_invoice_number': irn_number,
+        'eway_bill'       : eway_bill,
+        'item_name'       : '',
+        'quantity'        : 0.0,
+        'unit'            : '',
+        'alt_qty'         : 0.0,
+        'alt_unit'        : '',
+        'batch_no'        : '',
+        'mfg_date'        : '',
+        'exp_date'        : '',
+        'hsn_code'        : '',
+        'gst_rate'        : 0.0,
+        'rate'            : 0.0,
+        'amount'          : 0.0,
+        'discount'        : 0.0,
+        'cgst_amt'        : 0.0,
+        'sgst_amt'        : 0.0,
+        'igst_amt'        : 0.0,
+        'freight_amt'     : 0.0,
+        'dca_amt'         : 0.0,
+        'cf_amt'          : 0.0,
+        'other_amt'       : 0.0,
+        'total_amt'       : 0.0,
+        'currency'        : 'INR',
+        'exchange_rate'   : 1.0,
+        'narration'       : narration,
+        'guid'            : guid,
+        'alter_id'        : int(alter_id) if alter_id else 0,
+        'master_id'       : master_id,
+        'change_status'   : change_status,
+        'is_deleted'      : 'Yes',
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Ledger master parser
+# ──────────────────────────────────────────────────────────────────────────────
 
 def parse_ledgers(xml_content, company_name: str) -> list:
     try:
@@ -697,6 +839,7 @@ def parse_ledgers(xml_content, company_name: str) -> list:
             fax            = clean_text(ledger.findtext('LEDGERFAX', ''))
             contact_person = clean_text(ledger.findtext('LEDGERCONTACT', ''))
 
+            # Aliases
             aliases      = []
             direct_alias = clean_text(ledger.findtext('ALIAS', ''))
             if direct_alias and direct_alias != ledger_name:
@@ -708,6 +851,7 @@ def parse_ledgers(xml_content, company_name: str) -> list:
                         if alias_text and alias_text != ledger_name and alias_text not in aliases:
                             aliases.append(alias_text)
 
+            # Address
             address_lines = []
             for addr_list in ledger.findall('.//ADDRESS.LIST'):
                 for address in addr_list.findall('ADDRESS'):
@@ -769,6 +913,9 @@ def parse_ledgers(xml_content, company_name: str) -> list:
         return []
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Trial Balance parser
+# ──────────────────────────────────────────────────────────────────────────────
 
 def parse_trial_balance(xml_content, company_name: str, start_date: str, end_date: str) -> list:
     try:
@@ -791,11 +938,8 @@ def parse_trial_balance(xml_content, company_name: str, start_date: str, end_dat
         all_rows = []
 
         for ledger in ledger_nodes:
-            ledger_name = ledger.get('NAME', '')
-            if not ledger_name:
-                ledger_name = ledger.findtext('LEDGERNAME', '')
+            ledger_name = ledger.get('NAME', '') or clean_text(ledger.findtext('LEDGERNAME', ''))
             ledger_name = clean_text(ledger_name)
-
             if not ledger_name:
                 continue
 
@@ -806,8 +950,9 @@ def parse_trial_balance(xml_content, company_name: str, start_date: str, end_dat
 
             opening_text     = clean_text(ledger.findtext('OPENINGBALANCE', '0'))
             closing_text     = clean_text(ledger.findtext('CLOSINGBALANCE', '0'))
-            opening_val      = convert_to_float(extract_numeric_amount(str(opening_text)))
-            closing_val      = convert_to_float(extract_numeric_amount(str(closing_text)))
+            # Trial balance values are INR totals — use plain extraction
+            opening_val      = abs(convert_to_float(extract_numeric_amount(str(opening_text))))
+            closing_val      = abs(convert_to_float(extract_numeric_amount(str(closing_text))))
             net_transactions = closing_val - opening_val
 
             all_rows.append({
