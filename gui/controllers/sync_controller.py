@@ -39,6 +39,7 @@ from logging_config import logger
 # Voucher types in the order they sync (matches VOUCHER_CONFIG in sync_service)
 VOUCHER_ORDER = [
     "ledger",
+    "items",
     "trial_balance",
     "sales",
     "purchase",
@@ -204,7 +205,7 @@ class SyncController:
 
             # Build filtered VOUCHER_CONFIG based on selection
             from services.sync_service import (
-                VOUCHER_CONFIG, _sync_ledgers, _sync_trial_balance, _sync_voucher
+                VOUCHER_CONFIG, _sync_ledgers, _sync_items, _sync_trial_balance, _sync_voucher
             )
 
             # Ledgers (special — always done first if selected)
@@ -218,6 +219,17 @@ class SyncController:
                 pct = 10 + (done_steps / total_steps) * 80
                 self._post("progress", company_name, pct, "Ledgers done")
                 self._post("log",      company_name, "✓ Ledgers done", "SUCCESS")
+
+            # Items / StockItem master (special — snapshot/CDC, no date range)
+            if "items" in selected:
+                if self._cancelled:
+                    raise InterruptedError("Cancelled")
+                pct = 10 + (done_steps / max(total_steps, 1)) * 80
+                self._post("progress", company_name, pct, "Syncing items...")
+                self._post("log",      company_name, "→ Items (StockItem master)", "INFO")
+                _sync_items(company_name, tally, engine)
+                done_steps += 1
+                self._post("log", company_name, "✓ Items done", "SUCCESS")
 
             # Trial balance (special — also done directly)
             if "trial_balance" in selected:

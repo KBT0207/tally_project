@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker
 from database.models.company import Company
 from database.models.sync_state import SyncState
 from database.models.ledger import Ledger
+from database.models.item import Item
 from database.models.inventory_voucher import SalesVoucher, PurchaseVoucher, CreditNote, DebitNote
 from database.models.ledger_voucher import ReceiptVoucher, PaymentVoucher, JournalVoucher, ContraVoucher
 from database.models.trial_balance import TrialBalance
@@ -473,6 +474,80 @@ LEDGER_MODEL_MAP = {
     'journal' : JournalVoucher,
     'contra'  : ContraVoucher,
 }
+
+def upsert_items(rows, engine):
+    if not rows:
+        logger.warning("No rows to upsert for items")
+        return
+
+    db = _get_session(engine)
+    inserted = updated = unchanged = skipped = 0
+
+    update_fields = [
+        'item_name', 'parent_group', 'category',
+        'base_units', 'gst_type_of_supply',
+        'opening_balance', 'opening_rate', 'opening_value',
+        'entered_by', 'is_deleted', 'remote_alt_guid', 'alter_id',
+    ]
+
+    def _safe(row):
+        return {
+            'company_name'       : _t(row.get('company_name'),        255),
+            'guid'               : _t(row.get('guid'),                100),
+            'remote_alt_guid'    : _t(row.get('remote_alt_guid'),     100),
+            'alter_id'           : row.get('alter_id', 0),
+            'item_name'          : _t(row.get('item_name'),           500),
+            'parent_group'       : _t(row.get('parent_group'),        255),
+            'category'           : _t(row.get('category'),            255),
+            'base_units'         : _t(row.get('base_units'),          100),
+            'gst_type_of_supply' : _t(row.get('gst_type_of_supply'),  100),
+            'opening_balance'    : row.get('opening_balance',  0.0),
+            'opening_rate'       : row.get('opening_rate',     0.0),
+            'opening_value'      : row.get('opening_value',    0.0),
+            'entered_by'         : _t(row.get('entered_by'),          255),
+            'is_deleted'         : _t(row.get('is_deleted'),           10),
+        }
+
+    try:
+        for row in rows:
+            if not row.get('guid'):
+                skipped += 1
+                continue
+
+            safe = _safe(row)
+
+            existing = db.query(Item).filter_by(
+                guid         = safe['guid'],
+                company_name = safe['company_name'],
+            ).first()
+
+            if existing:
+                if int(safe['alter_id']) > int(existing.alter_id or 0):
+                    _log_changes(
+                        "item UPDATE", existing,
+                        [f for f in safe if f not in ('guid', 'company_name')],
+                        safe,
+                    )
+                    for field, value in safe.items():
+                        if field not in ('guid', 'company_name'):
+                            setattr(existing, field, value)
+                    updated += 1
+                else:
+                    unchanged += 1
+            else:
+                db.add(Item(**safe))
+                inserted += 1
+
+        db.commit()
+        _log_result("Items upsert", inserted, updated, unchanged, skipped)
+
+    except Exception:
+        db.rollback()
+        logger.exception("Error upserting items")
+        raise
+    finally:
+        db.close()
+
 
 def company_import_db(data, engine):
     db = _get_session(engine)

@@ -979,3 +979,113 @@ def parse_trial_balance(xml_content, company_name: str, start_date: str, end_dat
         logger.error(f"Error parsing trial balance: {e}")
         logger.error(traceback.format_exc())
         return []
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Stock Item (Item) master parser
+# ──────────────────────────────────────────────────────────────────────────────
+
+def parse_items(xml_content, company_name: str) -> list:
+    """
+    Parse Tally StockItem XML (full snapshot or CDC).
+
+    Column ordering:
+      1. Identity / CDC keys   — company_name, guid, remote_alt_guid, alter_id
+      2. Master descriptors    — item_name, parent_group, category
+      3. UoM / supply type     — base_units, gst_type_of_supply
+      4. Opening-stock values  — opening_balance, opening_rate, opening_value
+      5. Audit metadata        — entered_by, is_deleted
+    """
+    try:
+        if not xml_content or (isinstance(xml_content, str) and not xml_content.strip()):
+            logger.warning("Empty or None XML content for items")
+            return []
+
+        xml_content = sanitize_xml_content(xml_content)
+        if not xml_content or not xml_content.strip():
+            logger.warning("Empty XML after sanitization for items")
+            return []
+
+        root  = ET.fromstring(xml_content.encode('utf-8'))
+        items = root.findall('.//STOCKITEM')
+
+        if not items:
+            logger.warning(f"No stock items found in XML [{company_name}]")
+            return []
+
+        all_rows = []
+        skipped  = 0
+
+        for item in items:
+            # ── Identity ──────────────────────────────────────────────────────
+            item_name = clean_text(item.get('NAME', '') or item.findtext('NAME', ''))
+            guid      = clean_text(item.findtext('GUID', ''))
+
+            # Skip placeholder / empty nodes (no name or no guid)
+            if not item_name or not guid:
+                skipped += 1
+                logger.debug(f"Skipping item with no name/guid (name={item_name!r})")
+                continue
+
+            remote_alt_guid = clean_text(item.findtext('REMOTEALTGUID', ''))
+            alter_id_raw    = clean_text(item.findtext('ALTERID', '0'))
+
+            # ── Master descriptors — Tally embeds a leading space in PARENT / CATEGORY
+            parent_group = clean_text(item.findtext('PARENT',          '')).strip()
+            category     = clean_text(item.findtext('CATEGORY',        '')).strip()
+            base_units   = clean_text(item.findtext('BASEUNITS',       ''))
+            gst_type     = clean_text(item.findtext('GSTTYPEOFSUPPLY', ''))
+
+            # ── Opening-stock values ──────────────────────────────────────────
+            # OPENINGBALANCE can be "0.00 Ltr" (qty + unit) — numeric extractor handles it
+            # OPENINGRATE can be "1437.28/Ltr"              — numeric extractor handles it
+            opening_balance = convert_to_float(
+                extract_numeric_amount(clean_text(item.findtext('OPENINGBALANCE', '0')))
+            )
+            opening_rate    = convert_to_float(
+                extract_numeric_amount(clean_text(item.findtext('OPENINGRATE',    '0')))
+            )
+            opening_value   = convert_to_float(
+                extract_numeric_amount(clean_text(item.findtext('OPENINGVALUE',   '0')))
+            )
+
+            # ── Audit ─────────────────────────────────────────────────────────
+            entered_by = clean_text(item.findtext('ENTEREDBY', ''))
+
+            # Tally emits <ISDELETED TYPE="Logical"></ISDELETED> (empty tag) for
+            # active items — findtext default is never triggered for existing empty
+            # tags, so we must treat '' as 'No' explicitly.
+            is_deleted_raw = clean_text(item.findtext('ISDELETED', ''))
+            is_deleted     = 'Yes' if is_deleted_raw.lower() in ('yes', 'true', '1') else 'No'
+
+            all_rows.append({
+                # 1. Identity / CDC keys
+                'company_name'      : company_name,
+                'guid'              : guid,
+                'remote_alt_guid'   : remote_alt_guid,
+                'alter_id'          : int(alter_id_raw) if alter_id_raw else 0,
+                # 2. Master descriptors
+                'item_name'         : item_name,
+                'parent_group'      : parent_group,
+                'category'          : category,
+                # 3. UoM / supply type
+                'base_units'        : base_units,
+                'gst_type_of_supply': gst_type,
+                # 4. Opening-stock financials
+                'opening_balance'   : opening_balance,
+                'opening_rate'      : opening_rate,
+                'opening_value'     : opening_value,
+                # 5. Audit metadata
+                'entered_by'        : entered_by,
+                'is_deleted'        : is_deleted,
+            })
+
+        logger.info(f"Parsed {len(all_rows)} stock items (skipped {skipped} empty nodes) [{company_name}]")
+        return all_rows
+
+    except ET.ParseError as e:
+        logger.error(f"XML Parse Error in items: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Error parsing items: {e}")
+        logger.error(traceback.format_exc())
+        return []

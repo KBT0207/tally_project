@@ -13,6 +13,7 @@ from gui.state  import VoucherSelection
 # Label, attribute name on VoucherSelection, icon
 VOUCHER_ITEMS = [
     ("Ledgers",          "ledgers",       "📒"),
+    ("Items",            "items",         "📦"),
     ("Sales",            "sales",         "🧾"),
     ("Purchase",         "purchase",      "🛒"),
     ("Credit Note",      "credit_note",   "📄"),

@@ -65,6 +65,7 @@ class CompanyState:
 @dataclass
 class VoucherSelection:
     ledgers:       bool = True
+    items:         bool = True
     sales:         bool = True
     purchase:      bool = True
     credit_note:   bool = True
@@ -79,6 +80,7 @@ class VoucherSelection:
         """Return list of selected voucher_type strings matching VOUCHER_CONFIG keys."""
         mapping = {
             'ledgers':       'ledger',
+            'items':         'items',
             'sales':         'sales',
             'purchase':      'purchase',
             'credit_note':   'credit_note',
@@ -93,7 +95,7 @@ class VoucherSelection:
 
     def all_selected(self) -> bool:
         return all([
-            self.ledgers, self.sales, self.purchase, self.credit_note,
+            self.ledgers, self.items, self.sales, self.purchase, self.credit_note,
             self.debit_note, self.receipt, self.payment, self.journal,
             self.contra, self.trial_balance
         ])

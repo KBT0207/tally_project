@@ -10,12 +10,14 @@ from services.data_processor import (
     parse_inventory_voucher,
     parse_ledger_voucher,
     parse_ledgers,
+    parse_items,
     parse_trial_balance,
 )
 from database.database_processor import (
     get_sync_state,
     update_sync_state,
     upsert_ledgers,
+    upsert_items,
     upsert_and_advance_month,
     upsert_sales_vouchers,
     upsert_purchase_vouchers,
@@ -241,6 +243,67 @@ def _sync_trial_balance(
 
     except Exception:
         logger.exception(f"[{company_name}] Trial Balance sync failed")
+
+
+def _sync_items(company_name: str, tally: TallyConnector, engine):
+    """
+    Sync the StockItem master for *company_name*.
+
+    • First run  → full snapshot  (no date range needed for masters)
+    • Subsequent → CDC using stored alter_id
+    """
+    logger.info(f"[{company_name}] Syncing Items (StockItem master)")
+    try:
+        state           = get_sync_state(company_name, 'items', engine)
+        is_initial_done = state.is_initial_done if state else False
+        last_alter_id   = state.last_alter_id   if state else 0
+
+        if is_initial_done:
+            logger.info(f"[{company_name}][items] CDC | last_alter_id={last_alter_id}")
+            xml = tally.fetch_items_cdc(
+                company_name=company_name, last_alter_id=last_alter_id
+            )
+            if not xml:
+                logger.info(f"[{company_name}][items] CDC: no new/changed items")
+                return
+
+            rows = parse_items(xml, company_name)
+            if not rows:
+                logger.info(
+                    f"[{company_name}][items] CDC: 0 rows "
+                    f"(nothing changed since AlterID {last_alter_id})"
+                )
+                return
+
+            upsert_items(rows, engine)
+            new_max = _get_max_alter_id(rows)
+            update_sync_state(company_name, 'items', new_max, engine, is_initial_done=True)
+            logger.info(
+                f"[{company_name}][items] CDC done | rows={len(rows)} | new max_alter_id={new_max}"
+            )
+            return
+
+        logger.info(f"[{company_name}][items] SNAPSHOT — fetching all stock items")
+        xml = tally.fetch_items(company_name=company_name)
+        if not xml:
+            logger.warning(f"[{company_name}][items] No item data from Tally")
+            return
+
+        rows = parse_items(xml, company_name)
+        if not rows:
+            logger.warning(f"[{company_name}][items] Snapshot parsed 0 rows")
+            return
+
+        upsert_items(rows, engine)
+        max_alter_id = _get_max_alter_id(rows)
+        update_sync_state(company_name, 'items', max_alter_id, engine, is_initial_done=True)
+        logger.info(
+            f"[{company_name}][items] Snapshot done | "
+            f"rows={len(rows)} | max_alter_id={max_alter_id} | CDC enabled from next run"
+        )
+
+    except Exception:
+        logger.exception(f"[{company_name}] Item sync failed")
 
 
 def _sync_ledgers(company_name: str, tally: TallyConnector, engine):
@@ -469,6 +532,7 @@ def sync_company(
 
     # Ledgers and trial balance are always sequential (fast, no parallelism needed)
     _sync_ledgers(comp_name, tally, engine)
+    _sync_items(comp_name, tally, engine)
     _sync_trial_balance(comp_name, tally, engine, from_date, to_date)
 
     logger.info(f"[{comp_name}] Launching {len(VOUCHER_CONFIG)} voucher syncs …")

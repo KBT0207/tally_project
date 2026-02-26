@@ -139,8 +139,8 @@ for i in comp:
         continue
 
     
-    sales = tally.fetch_credit_note(company_name=name,from_date='20250403',to_date='20250403',debug=False)
-    data = parse_inventory_voucher(sales, company_name=name)
+    sales = tally.fetch_items(company_name=name, debug=True)
+    data = parse_items(sales, company_name=name)
     df = pd.DataFrame(data)
     # df.to_excel('sample.xlsx',index=False)
     view(df)

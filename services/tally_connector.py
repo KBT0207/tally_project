@@ -559,6 +559,32 @@ class TallyConnector:
     ) -> Optional[bytes]:
         return self._fetch('utils/reports/profit_loss.xml', 'Profit & Loss', company_name, from_date, to_date, debug=debug)
 
+
+# ── Item (StockItem) master fetches ───────────────────────────────────────
+
+    def fetch_items(
+        self,
+        company_name: str,
+        debug:        bool = False,
+    ) -> Optional[bytes]:
+        """Full snapshot of all StockItem masters."""
+        return self._fetch(
+            'utils/item.xml', 'Items',
+            company_name, debug=debug,
+        )
+
+    def fetch_items_cdc(
+        self,
+        company_name:  str,
+        last_alter_id: int,
+        debug:         bool = False,
+    ) -> Optional[bytes]:
+        """CDC fetch — only StockItems changed since last_alter_id."""
+        return self._fetch(
+            'utils/cdc/item_cdc.xml', 'Items CDC',
+            company_name, alter_id=last_alter_id, debug=debug,
+        )
+
     # ── Date utilities ────────────────────────────────────────────────────────
 
     @staticmethod

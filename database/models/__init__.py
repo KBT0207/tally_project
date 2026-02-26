@@ -6,6 +6,7 @@ from .inventory_voucher import SalesVoucher, PurchaseVoucher, CreditNote, DebitN
 from .ledger_voucher import ReceiptVoucher, PaymentVoucher, JournalVoucher, ContraVoucher
 from .trial_balance import TrialBalance
 from .scheduler_config import CompanySchedulerConfig
+from .item import Item
 
 __all__ = [
     'Base',
@@ -22,4 +23,5 @@ __all__ = [
     'ContraVoucher',
     'TrialBalance',
     'CompanySchedulerConfig',
+    'Item',
 ]
