@@ -127,19 +127,22 @@
 from services.tally_connector import TallyConnector
 from services.data_processor import *
 import pandas as pd
+from xlwings import view
 
 
 tally = TallyConnector()
 
-comp = tally.fetch_all_companies()
+comp = tally.fetch_all_companies(debug=False)
 for i in comp:
     name = i.get('name', '')
     if not name or name == 'N/A':
         continue
+
     
-    sales = tally.fetch_purchase(company_name=name,from_date='20240401',to_date='20250331',debug=True)
+    sales = tally.fetch_credit_note(company_name=name,from_date='20250403',to_date='20250403',debug=False)
     data = parse_inventory_voucher(sales, company_name=name)
     df = pd.DataFrame(data)
-    print(df)
+    # df.to_excel('sample.xlsx',index=False)
+    view(df)
 
 

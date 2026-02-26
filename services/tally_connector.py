@@ -210,19 +210,37 @@ class TallyConnector:
         except Exception as e:
             logger.debug(f'[ALTER_ID CHECK] {data_type} | could not inspect response: {e}')
 
-    def fetch_all_companies(self) -> list:
+    def fetch_all_companies(self, debug: bool = False) -> list:
         try:
             tree        = ET.parse('utils/company.xml')
             xml_payload = ET.tostring(tree.getroot(), encoding='utf-8')
-            response    = self.session.post(url=self.url, headers=self.header, data=xml_payload, timeout=120)
+
+            if debug:
+                self._save_debug_file(xml_payload, 'req_all_companies', 'ALL')
+
+            response = self.session.post(
+                url=self.url,
+                headers=self.header,
+                data=xml_payload,
+                timeout=120
+            )
 
             if response.status_code != 200:
                 logger.error(f'fetch_all_companies: HTTP {response.status_code}')
                 return []
 
+            if debug:
+                # Save raw response
+                self._save_debug_file(response.content, 'resp_raw_all_companies', 'ALL')
+
+                # Save sanitized response
+                sanitized_debug = self.sanitize_xml(response.content)
+                self._save_debug_file(sanitized_debug, 'resp_all_companies', 'ALL')
+
             sanitized = self.sanitize_xml(response.content)
             root      = ET.fromstring(sanitized)
             companies = [self._parse_company(c) for c in root.findall('.//COMPANY')]
+
             logger.info(f'Found {len(companies)} companies in Tally')
             return companies
 

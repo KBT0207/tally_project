@@ -448,6 +448,13 @@ def parse_inventory_voucher(xml_content, company_name: str, voucher_type_name: s
                         voucher_currency      = temp_cur['currency']
                         break
 
+            # Get total_amt directly from party ledger in XML
+            total_amt_from_xml = 0.0
+            for ledger in ledger_entries:
+                if clean_text(ledger.findtext('ISPARTYLEDGER', 'No')) == 'Yes':
+                    total_amt_from_xml = convert_to_float(extract_numeric_amount(clean_text(ledger.findtext('AMOUNT', '0'))))
+                    break
+
             voucher_gst_data = {
                 'cgst_total': 0.0, 'sgst_total': 0.0, 'igst_total': 0.0,
                 'cgst_rate' : 0.0, 'sgst_rate' : 0.0, 'igst_rate' : 0.0,
@@ -482,13 +489,11 @@ def parse_inventory_voucher(xml_content, company_name: str, voucher_type_name: s
                     voucher_charges['freight_amt'] += amount
                 elif re.search(r'dca', ledger_name_lower):
                     voucher_charges['dca_amt'] += amount
-                elif re.search(r'clearing\s*&?\s*forwarding', ledger_name_lower):
+                elif re.search(r'clearing[\s&amp;]+forwarding', ledger_name_lower) or re.search(r'clearing\s*&\s*forwarding', ledger_name_lower):
                     voucher_charges['cf_amt'] += amount
-                elif (ledger_name.strip() and ledger_name != party_name and amount > 0.01
-                      and not re.search(r'round', ledger_name_lower)):
-                    is_gst = re.search(r'cgst|sgst|igst', ledger_name_lower) and re.search(r'input|output', ledger_name_lower)
-                    if not is_gst and not re.search(r'duty|cess', ledger_name_lower):
-                        voucher_charges['other_amt'] += amount
+                elif clean_text(ledger.findtext('ISPARTYLEDGER', 'No')) != 'Yes':
+                    # Only truly unknown/uncategorized non-GST, non-party ledgers go into other_amt
+                    voucher_charges['other_amt'] += amount
 
             has_real_inventory = False
             if inventory_entries:
@@ -611,21 +616,13 @@ def parse_inventory_voucher(xml_content, company_name: str, voucher_type_name: s
                     'dca_amt'      : voucher_charges['dca_amt'],
                     'cf_amt'       : voucher_charges['cf_amt'],
                     'other_amt'    : voucher_charges['other_amt'],
-                    'total_amt'    : (voucher_gst_data['cgst_total'] + voucher_gst_data['sgst_total'] +
-                                      voucher_gst_data['igst_total'] + voucher_charges['freight_amt'] +
-                                      voucher_charges['dca_amt'] + voucher_charges['cf_amt'] +
-                                      voucher_charges['other_amt']),
+                    'total_amt'    : total_amt_from_xml,
                     'currency'     : voucher_currency,
                     'exchange_rate': voucher_exchange_rate,
                 })
             else:
-                voucher_total = (
-                    total_item_amount +
-                    voucher_gst_data['cgst_total'] + voucher_gst_data['sgst_total'] + voucher_gst_data['igst_total'] +
-                    voucher_charges['freight_amt'] + voucher_charges['dca_amt'] +
-                    voucher_charges['cf_amt'] + voucher_charges['other_amt']
-                )
-                for item in temp_item_data:
+                voucher_total = total_amt_from_xml
+                for idx, item in enumerate(temp_item_data):
                     proportion = item['amount'] / total_item_amount if total_item_amount else 0
                     all_rows.append({
                         **base,
@@ -645,11 +642,11 @@ def parse_inventory_voucher(xml_content, company_name: str, voucher_type_name: s
                         'cgst_amt'     : voucher_gst_data['cgst_total'] * proportion,
                         'sgst_amt'     : voucher_gst_data['sgst_total'] * proportion,
                         'igst_amt'     : voucher_gst_data['igst_total'] * proportion,
-                        'freight_amt'  : voucher_charges['freight_amt'],
-                        'dca_amt'      : voucher_charges['dca_amt'],
-                        'cf_amt'       : voucher_charges['cf_amt'],
-                        'other_amt'    : voucher_charges['other_amt'],
-                        'total_amt'    : voucher_total,
+                        'freight_amt'  : voucher_charges['freight_amt'] if idx == 0 else 0.0,
+                        'dca_amt'      : voucher_charges['dca_amt'] if idx == 0 else 0.0,
+                        'cf_amt'       : voucher_charges['cf_amt'] if idx == 0 else 0.0,
+                        'other_amt'    : voucher_charges['other_amt'] if idx == 0 else 0.0,
+                        'total_amt'    : voucher_total if idx == 0 else 0.0,
                         'currency'     : item['currency'],
                         'exchange_rate': item['exchange_rate'],
                     })
