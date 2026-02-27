@@ -325,6 +325,14 @@ class HomePage(tk.Frame):
     #  Selection
     # ─────────────────────────────────────────────────────────────────────────
     def _on_card_select(self, name: str, selected: bool):
+        # Silently reject selection of not-configured companies
+        co = self.state.companies.get(name)
+        if co and co.status == CompanyStatus.NOT_CONFIGURED:
+            # Force the card's checkbox back to unchecked
+            if name in self._cards:
+                self._cards[name].set_selected(False)
+            return
+
         sel = self.state.selected_companies
         if selected:
             if name not in sel:
@@ -334,13 +342,14 @@ class HomePage(tk.Frame):
         self._update_action_bar()
 
     def _select_all(self):
-        # Only select configured companies for sync
+        # Only configured companies can be selected for sync/schedule
         self.state.selected_companies = [
             n for n, c in self.state.companies.items()
             if c.status != CompanyStatus.NOT_CONFIGURED
         ]
         for name, card in self._cards.items():
             co = self.state.companies.get(name)
+            # Only tick cards for configured companies; leave NOT_CONFIGURED unchecked
             card.set_selected(bool(co and co.status != CompanyStatus.NOT_CONFIGURED))
         self._update_action_bar()
 
@@ -351,7 +360,15 @@ class HomePage(tk.Frame):
         self._update_action_bar()
 
     def _update_action_bar(self):
-        n = len(self.state.selected_companies)
+        # Only configured companies can actually be synced or scheduled
+        configured_selected = [
+            n for n in self.state.selected_companies
+            if (co := self.state.companies.get(n)) and co.status != CompanyStatus.NOT_CONFIGURED
+        ]
+        # Keep selected_companies clean — strip any NOT_CONFIGURED that slipped in
+        self.state.selected_companies = configured_selected
+
+        n = len(configured_selected)
         if n == 0:
             self._selection_lbl.configure(text="No companies selected")
             self._sync_sel_btn.configure(state="disabled")

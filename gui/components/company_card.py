@@ -65,15 +65,20 @@ class CompanyCard(tk.Frame):
         self._bg_frames = [self, outer]
 
         # ── Checkbox ──────────────────────────────────────
+        # NOT_CONFIGURED companies cannot be selected for Sync/Schedule —
+        # show a disabled, always-unchecked checkbox to make this clear.
         chk = tk.Checkbutton(
             outer,
             variable=self._selected_var,
             bg=Color.BG_CARD,
             activebackground=Color.BG_CARD,
+            disabledforeground=Color.TEXT_MUTED,
             relief="flat", bd=0,
             command=self._on_toggle,
+            state="disabled" if not is_configured else "normal",
         )
         chk.grid(row=0, column=0, rowspan=2, sticky="ns", padx=(0, Spacing.MD))
+        self._chk = chk   # keep ref so set_selected() can skip it when disabled
         self._bg_frames.append(chk)
 
         # ── Company name row ──────────────────────────────
@@ -84,7 +89,8 @@ class CompanyCard(tk.Frame):
         self._name_lbl = tk.Label(
             name_row, text=co.name,
             font=Font.LABEL_BOLD, bg=Color.BG_CARD,
-            fg=Color.TEXT_PRIMARY, anchor="w",
+            fg=Color.TEXT_MUTED if not is_configured else Color.TEXT_PRIMARY,
+            anchor="w",
         )
         self._name_lbl.pack(side="left")
         self._bg_frames.append(self._name_lbl)
@@ -289,6 +295,10 @@ class CompanyCard(tk.Frame):
 
     # ─────────────────────────────────────────────────────────────────────────
     def _on_toggle(self):
+        # Extra safety — should never fire for disabled checkboxes, but guard anyway
+        if self.company.status == "Not Configured":
+            self._selected_var.set(False)
+            return
         self.on_select(self.company.name, self._selected_var.get())
 
     def _on_sync_click(self):
@@ -321,6 +331,10 @@ class CompanyCard(tk.Frame):
             self._meta_lbl.configure(text=f"Last sync: {self._fmt_sync_time(dt)}")
 
     def set_selected(self, value: bool):
+        # NOT_CONFIGURED companies are never selectable — skip silently
+        if self.company.status == "Not Configured":
+            self._selected_var.set(False)
+            return
         self._selected_var.set(value)
 
     def is_selected(self) -> bool:

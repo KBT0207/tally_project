@@ -61,22 +61,32 @@ class SyncController:
 
     def __init__(
         self,
-        state:       AppState,
-        out_queue:   queue.Queue,    # GUI polls this
-        companies:   list[str],      # company names to sync
-        sync_mode:   str,            # SyncMode.INCREMENTAL | SNAPSHOT
-        from_date:   Optional[str],  # YYYYMMDD (snapshot only)
-        to_date:     str,            # YYYYMMDD
-        vouchers:    VoucherSelection,
-        sequential:  bool = True,    # True=one at a time, False=parallel
+        state:          AppState,
+        out_queue:      queue.Queue,       # GUI polls this
+        companies:      list[str],         # company names to sync
+        sync_mode:      str,               # SyncMode.INCREMENTAL | SNAPSHOT
+        from_date:      Optional[str],     # YYYYMMDD — global fallback (snapshot)
+        to_date:        str,               # YYYYMMDD — global fallback
+        vouchers,                          # VoucherSelection OR dict[str, VoucherSelection]
+        sequential:     bool = True,       # True=one at a time, False=parallel
+        from_dates_map: Optional[dict] = None,  # per-company from dates (YYYYMMDD|None)
+        to_dates_map:   Optional[dict] = None,  # per-company to dates  (YYYYMMDD)
     ):
         self._state      = state
         self._q          = out_queue
         self._companies  = companies
         self._sync_mode  = sync_mode
-        self._from_date  = from_date
-        self._to_date    = to_date
-        self._vouchers   = vouchers
+        self._from_date  = from_date       # global fallback
+        self._to_date    = to_date         # global fallback
+        # Per-company date maps (override global for each company)
+        # from_dates_map[name] = None means "use alter_id / incremental"
+        self._from_dates = from_dates_map or {n: from_date  for n in companies}
+        self._to_dates   = to_dates_map   or {n: to_date    for n in companies}
+        # Normalise vouchers: always dict[company_name → VoucherSelection]
+        if isinstance(vouchers, dict):
+            self._vouchers_map = vouchers
+        else:
+            self._vouchers_map = {n: vouchers for n in companies}
         self._sequential = sequential
         self._cancelled  = False
         self._threads: list[threading.Thread] = []
@@ -178,21 +188,55 @@ class SyncController:
 
         # ── Step 2: determine dates ───────────────────────
         company_dict = self._build_company_dict(company_name)
-        to_date      = self._to_date
-        from_date    = self._from_date  # None = let sync_service resolve
+        co_state     = self._state.get_company(company_name)
 
-        # If incremental, check if initial is done; force snapshot if not
+        # Per-company dates (may be None for incremental)
+        from_date = self._from_dates.get(company_name, self._from_date)
+        to_date   = self._to_dates.get(company_name, self._to_date)
+
+        # Scenario A: INCREMENTAL — no explicit dates needed
+        #   Uses alter_id to fetch only changed records.
+        #   BUT: if initial sync hasn't been done yet, force a full snapshot
+        #   using the company's starting_from date.
         if self._sync_mode == SyncMode.INCREMENTAL:
-            co_state = self._state.get_company(company_name)
             if co_state and not co_state.is_initial_done:
-                self._post(
-                    "log", company_name,
-                    "Initial sync not done — running full snapshot first", "WARNING"
-                )
-                from_date = co_state.starting_from  # Use company start date
+                self._post("log", company_name,
+                    "⚠  Initial sync not done yet — running full snapshot first.", "WARNING")
+                from_date = co_state.starting_from or company_dict.get("starting_from")
+                # to_date stays as-is (today)
+            else:
+                # True incremental — from_date stays None
+                from_date = None
+
+        # Scenario B: SNAPSHOT with per-company dates
+        #   from_date set by the row's custom From entry (or falls back to global)
+        # Scenario C: SNAPSHOT with global dates only
+        #   from_date = global_from, to_date = global_to
+        # Both B and C are already resolved in from_date / to_date above.
+
+        # Final guard: if from_date is still None for snapshot, use company default
+        if self._sync_mode == SyncMode.SNAPSHOT and not from_date:
+            from_date = (co_state.starting_from if co_state else None) \
+                        or company_dict.get("starting_from", "20240401")
+            self._post("log", company_name,
+                f"ℹ  No from date specified — using company default: {from_date}", "INFO")
+
+        # Log what we're actually using
+        if from_date:
+            self._post("log", company_name,
+                f"📅  Date range: {from_date} → {to_date}", "INFO")
+        else:
+            self._post("log", company_name,
+                f"📅  Incremental (alter_id) up to {to_date}", "INFO")
 
         # ── Step 3: determine which vouchers to sync ──────
-        selected = self._vouchers.selected_types()
+        # Look up this company's specific voucher selection; fall back to
+        # the first available if somehow the company is missing from the map.
+        voucher_sel = self._vouchers_map.get(
+            company_name,
+            next(iter(self._vouchers_map.values())) if self._vouchers_map else VoucherSelection()
+        )
+        selected = voucher_sel.selected_types()
         self._post(
             "log", company_name,
             f"Syncing: {', '.join(selected)}", "INFO"

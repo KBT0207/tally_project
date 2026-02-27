@@ -559,15 +559,25 @@ class SchedulerPage(tk.Frame):
             self._no_sched_lbl.pack(fill="both", expand=True)
             return
 
+        # Only show CONFIGURED companies — unconfigured ones cannot be scheduled
         companies = sorted(
-            self.state.companies.values(),
+            [c for c in self.state.companies.values()
+             if c.status != CompanyStatus.NOT_CONFIGURED],
             key=lambda c: (0 if c.schedule_enabled else 1, c.name.lower())
         )
 
         if not companies:
+            total = len(self.state.companies)
+            if total == 0:
+                msg = "No companies loaded.\nGo to Companies page and click ⟳ Refresh."
+            else:
+                msg = (
+                    f"{total} company/companies found but none are configured yet.\n\n"
+                    "Go to the Companies page, click ⚙ Configure on each company,\n"
+                    "then return here to set up a schedule."
+                )
             tk.Label(
-                self._list_frame,
-                text="No companies loaded. Go to Companies page and click Refresh.",
+                self._list_frame, text=msg,
                 font=Font.BODY, bg=Color.BG_CARD, fg=Color.TEXT_MUTED,
                 pady=40, justify="center",
             ).pack(fill="both", expand=True)
@@ -611,7 +621,7 @@ class SchedulerPage(tk.Frame):
         # (needed if scheduler was already running before refresh)
         if self._sched_ctrl and self._sched_ctrl.is_running():
             for name, co in self.state.companies.items():
-                if co.schedule_enabled:
+                if co.schedule_enabled and co.status != CompanyStatus.NOT_CONFIGURED:
                     try:
                         self._sched_ctrl.add_or_update_job(name)
                     except Exception:
@@ -624,7 +634,7 @@ class SchedulerPage(tk.Frame):
         ):
             return
         for name, co in self.state.companies.items():
-            if co.schedule_enabled:
+            if co.schedule_enabled and co.status != CompanyStatus.NOT_CONFIGURED:
                 co.schedule_enabled = False
                 if self._sched_ctrl:
                     self._sched_ctrl.remove_job(name)
@@ -634,6 +644,14 @@ class SchedulerPage(tk.Frame):
 
     def _on_run_now(self, company_name: str):
         """Trigger an immediate manual sync for this company."""
+        co = self.state.get_company(company_name)
+        if not co or co.status == CompanyStatus.NOT_CONFIGURED:
+            messagebox.showwarning(
+                "Not Configured",
+                f"'{company_name}' has not been configured yet.\n\n"
+                "Go to the Companies page and click ⚙ Configure first.",
+            )
+            return
         if self.state.sync_active:
             messagebox.showwarning("Sync Running", "A sync is already in progress.")
             return
