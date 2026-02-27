@@ -3,10 +3,7 @@ from sqlalchemy import (
     Column, String, Boolean, Integer, DateTime,
     UniqueConstraint,
 )
-from sqlalchemy.orm import declarative_base
-
-Base = declarative_base()
-
+from .base import Base
 
 class CompanySchedulerConfig(Base):
 
