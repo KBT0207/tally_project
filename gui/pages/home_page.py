@@ -395,6 +395,13 @@ class HomePage(tk.Frame):
         def worker():
             try:
                 self.app._load_companies_from_db(self.state.db_engine)
+                # Re-apply scheduler config to the brand-new CompanyState objects,
+                # then broadcast so ALL pages (home + scheduler) refresh together.
+                try:
+                    from gui.controllers.company_controller import CompanyController
+                    CompanyController(self.state).load_scheduler_config()
+                except Exception:
+                    pass
                 self.app.post("companies_loaded", None)
             except Exception as e:
                 self.app.post("error", f"Refresh failed: {e}")

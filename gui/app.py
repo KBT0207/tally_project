@@ -490,6 +490,8 @@ class TallySyncApp:
             self._q.put(("error", f"Failed to load companies: {e}"))
 
         # ── Step 3: Load scheduler config from DB ────────
+        # IMPORTANT: must run AFTER _load_companies_from_db so that the
+        # CompanyState objects already exist and can receive schedule fields.
         try:
             from gui.controllers.company_controller import CompanyController
             CompanyController(self.state).load_scheduler_config()
@@ -497,6 +499,7 @@ class TallySyncApp:
             from logging_config import logger
             logger.warning(f"[App] Could not load scheduler config: {e}")
 
+        # companies_loaded triggers home + scheduler page refresh
         self._q.put(("companies_loaded", None))
 
         # ── Step 3: Ping Tally ────────────────────────────
@@ -714,10 +717,16 @@ class TallySyncApp:
                 )
 
         elif event == "companies_loaded":
-            # Refresh the home page
+            # Refresh the home page with the newly loaded companies
             home = self._frames.get("home")
             if home and hasattr(home, "refresh_companies"):
                 home.refresh_companies()
+
+            # Refresh the scheduler page so rows reflect current schedule config
+            # and next-run times are recalculated from the live APScheduler state.
+            sched_page = self._frames.get("scheduler")
+            if sched_page and hasattr(sched_page, "refresh_companies"):
+                sched_page.refresh_companies()
 
         elif event == "error":
             _, msg_text = msg

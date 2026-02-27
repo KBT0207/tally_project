@@ -35,6 +35,10 @@ class ScheduleRow(tk.Frame):
     """
     Displays one company's schedule status.
     Expandable edit form opens inline.
+
+    IMPORTANT: always reads `self._state.companies[self._name]` — never caches
+    the CompanyState object — so that a Home-page Refresh (which creates brand-new
+    CompanyState objects) is reflected here automatically.
     """
 
     INTERVALS = ["minutes", "hourly", "daily"]
@@ -51,15 +55,32 @@ class ScheduleRow(tk.Frame):
         controller,          # SchedulerController
         co_ctrl,             # CompanyController
         on_run_now,          # callback(name)
+        state:      AppState = None,   # NEW — live state reference
         **kwargs,
     ):
         super().__init__(parent, bg=Color.BG_CARD, **kwargs)
-        self.company    = company
+        self._name       = company.name   # key into state.companies
+        self._state      = state          # live AppState — read company from here
         self._sched_ctrl = controller
-        self._co_ctrl   = co_ctrl
+        self._co_ctrl    = co_ctrl
         self._on_run_now = on_run_now
-        self._editing   = False
+        self._editing    = False
         self._build()
+
+    # ── Live company accessor — always returns the current object ─────────────
+    @property
+    def company(self) -> CompanyState:
+        """Always fetch from live state so stale references never happen."""
+        if self._state and self._name in self._state.companies:
+            return self._state.companies[self._name]
+        # Fallback: return whatever was passed in originally
+        return self._fallback_company
+
+    @company.setter
+    def company(self, value: CompanyState):
+        """Keep a fallback copy in case state is not wired yet."""
+        self._fallback_company = value
+        self._name = value.name
 
     # ─────────────────────────────────────────────────────────────────────────
     def _build(self):
@@ -73,7 +94,7 @@ class ScheduleRow(tk.Frame):
 
         # Company name
         tk.Label(
-            summary, text=self.company.name,
+            summary, text=self._name,
             font=Font.LABEL_BOLD, bg=Color.BG_CARD, fg=Color.TEXT_PRIMARY, anchor="w",
         ).grid(row=0, column=0, sticky="w")
 
@@ -105,7 +126,7 @@ class ScheduleRow(tk.Frame):
             font=Font.BUTTON_SM, bg=Color.PRIMARY, fg=Color.TEXT_WHITE,
             relief="flat", bd=0, padx=8, pady=3,
             cursor="hand2",
-            command=lambda: self._on_run_now(self.company.name),
+            command=lambda: self._on_run_now(self._name),
         ).pack(side="left", padx=(0, Spacing.XS))
 
         self._toggle_btn = tk.Button(
@@ -137,7 +158,8 @@ class ScheduleRow(tk.Frame):
 
     # ─────────────────────────────────────────────────────────────────────────
     def _build_edit_form(self):
-        f = self._edit_frame
+        f  = self._edit_frame
+        co = self.company   # snapshot for building — live reads happen on save
 
         tk.Label(
             f, text="Configure Schedule",
@@ -149,7 +171,7 @@ class ScheduleRow(tk.Frame):
                  bg=Color.PRIMARY_LIGHT, fg=Color.TEXT_SECONDARY,
                  ).grid(row=1, column=0, sticky="w", padx=(0, Spacing.XS))
 
-        self._value_var = tk.IntVar(value=self.company.schedule_value)
+        self._value_var = tk.IntVar(value=co.schedule_value)
         vcmd = (f.register(lambda s: s.isdigit() and 1 <= int(s) <= 999), "%P")
         self._value_entry = tk.Entry(
             f, textvariable=self._value_var,
@@ -160,7 +182,7 @@ class ScheduleRow(tk.Frame):
         )
         self._value_entry.grid(row=1, column=1, sticky="w", padx=(0, Spacing.SM))
 
-        self._interval_var = tk.StringVar(value=self.company.schedule_interval)
+        self._interval_var = tk.StringVar(value=co.schedule_interval)
         interval_menu = tk.OptionMenu(
             f,
             self._interval_var,
@@ -176,7 +198,7 @@ class ScheduleRow(tk.Frame):
         # Daily time picker (shown only for daily)
         self._time_lbl = tk.Label(f, text="At (HH:MM):", font=Font.BODY,
                                   bg=Color.PRIMARY_LIGHT, fg=Color.TEXT_SECONDARY)
-        self._time_var = tk.StringVar(value=self.company.schedule_time)
+        self._time_var = tk.StringVar(value=co.schedule_time)
         self._time_entry = tk.Entry(
             f, textvariable=self._time_var,
             font=Font.BODY, width=8,
@@ -337,7 +359,19 @@ class ScheduleRow(tk.Frame):
     #  Public
     # ─────────────────────────────────────────────────────────────────────────
     def refresh_next_run(self):
+        """
+        Full UI refresh from the live CompanyState object.
+        Safe to call any time — reads through the `company` property so it
+        always gets the current object even after a state.companies rebuild.
+        """
+        co = self.company
+        # Update meta text (schedule + next run)
         self._update_meta()
+        # Update status badge and enable/disable button to match live state
+        self._toggle_enable_ui(co.schedule_enabled)
+
+    # Alias for clarity when called from SchedulerPage.refresh_companies()
+    refresh_from_state = refresh_next_run
 
     # ─────────────────────────────────────────────────────────────────────────
     #  Helpers
@@ -546,6 +580,7 @@ class SchedulerPage(tk.Frame):
                 controller  = self._sched_ctrl,
                 co_ctrl     = self._co_ctrl,
                 on_run_now  = self._on_run_now,
+                state       = self.state,       # ← pass live state so row never goes stale
             )
             bg = Color.BG_TABLE_ODD if i % 2 == 0 else Color.BG_TABLE_EVEN
             row.configure(bg=bg)
@@ -557,8 +592,30 @@ class SchedulerPage(tk.Frame):
     #  Toolbar actions
     # ─────────────────────────────────────────────────────────────────────────
     def _refresh_next_runs(self):
+        """Manually refresh all next-run labels (toolbar button)."""
         for row in self._rows.values():
             row.refresh_next_run()
+
+    def refresh_companies(self):
+        """
+        Called by app.py whenever companies are reloaded (startup or Refresh).
+        Rebuilds the row list so new CompanyState objects are picked up.
+        Also re-syncs APScheduler jobs for any enabled schedules.
+        Must be called on the main (GUI) thread.
+        """
+        # Rebuild all rows — each ScheduleRow now holds a live state reference
+        self._render_rows()
+        self._update_scheduler_status()
+
+        # Re-register APScheduler jobs for companies that have scheduling enabled
+        # (needed if scheduler was already running before refresh)
+        if self._sched_ctrl and self._sched_ctrl.is_running():
+            for name, co in self.state.companies.items():
+                if co.schedule_enabled:
+                    try:
+                        self._sched_ctrl.add_or_update_job(name)
+                    except Exception:
+                        pass
 
     def _disable_all(self):
         if not messagebox.askyesno(
@@ -629,9 +686,35 @@ class SchedulerPage(tk.Frame):
         self.after(0, _do)
 
     # ─────────────────────────────────────────────────────────────────────────
+    #  Live next-run ticker — refreshes all rows every 30 s automatically
+    # ─────────────────────────────────────────────────────────────────────────
+    def _start_next_run_ticker(self):
+        """
+        Called once on first on_show().  Ticks every 30 s to keep "Next run"
+        labels accurate without the user having to click ⟳ Refresh.
+        """
+        if getattr(self, "_ticker_active", False):
+            return   # already running
+        self._ticker_active = True
+        self._tick_next_runs()
+
+    def _tick_next_runs(self):
+        """Scheduled callback — refreshes all row meta labels."""
+        if not self._ticker_active:
+            return
+        for row in self._rows.values():
+            try:
+                row.refresh_next_run()
+            except Exception:
+                pass
+        # Re-schedule every 30 seconds
+        self.after(30_000, self._tick_next_runs)
+
+    # ─────────────────────────────────────────────────────────────────────────
     #  Lifecycle
     # ─────────────────────────────────────────────────────────────────────────
     def on_show(self):
         self._init_controllers()
         self._update_scheduler_status()
         self._render_rows()
+        self._start_next_run_ticker()   # idempotent — safe to call each time
