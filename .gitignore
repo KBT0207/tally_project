@@ -1,12 +1,13 @@
 # =========================
-# Python cache / compiled
+# Python Cache / Compiled
 # =========================
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
 
 # =========================
-# Virtual environments
+# Virtual Environments
 # =========================
 .venv/
 venv/
@@ -15,11 +16,12 @@ ENV/
 .virtualenv/
 
 # =========================
-# Environment variables
+# Environment Variables
 # =========================
 .env
 .env.*
 *.env
+!.env.sample
 
 # =========================
 # Logs
@@ -35,6 +37,7 @@ dist/
 *.egg-info/
 .eggs/
 wheels/
+pip-wheel-metadata/
 MANIFEST
 
 # =========================
@@ -47,6 +50,12 @@ htmlcov/
 .tox/
 .nox/
 .cache/
+
+# =========================
+# Type Checkers
+# =========================
+.mypy_cache/
+.pyre/
 
 # =========================
 # IDE / Editor
@@ -68,27 +77,20 @@ Thumbs.db
 .ipynb_checkpoints/
 
 # =========================
-# Temporary files
+# Temporary Files
 # =========================
 *.tmp
 *.bak
 *.old
 
 # =========================
-# Data files (ignore globally)
+# Database Files (Optional - remove if you want to track)
+# =========================
+*.sqlite3
+*.db
+
+# =========================
+# Large Data Files (Optional)
 # =========================
 *.xlsx
 *.csv
-
-# Ignore ALL xml by default
-*.xml
-
-# =========================
-# Allow XML inside utils/cdc
-# =========================
-!utils/
-!utils/cdc/
-!utils/cdc/*.xml
-
-# Allow example env file
-!.env.sample
