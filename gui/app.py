@@ -833,26 +833,50 @@ class TallySyncApp:
     #  DB Settings dialog (re-open from header ⚙ button)
     # ─────────────────────────────────────────────────────────────────────────
     def open_db_settings(self):
-        import configparser, os
-        cfg = configparser.ConfigParser()
+        """
+        Open DB settings dialog.
+        Reads current values from .env (via _load_db_config),
+        shows the dialog, then writes changes back to .env.
+        """
+        import os
 
+        # Pre-fill from current .env (or fall back to defaults if missing)
         defaults = {
             "host": "localhost", "port": "3306",
             "username": "root",  "password": "",
-            "database": "tally_sync",
+            "database": "tally_db",
         }
-        if os.path.exists(self._DB_CONFIG_FILE):
-            cfg.read(self._DB_CONFIG_FILE)
-            if "database" in cfg:
-                defaults.update(cfg["database"])
+        try:
+            loaded = self._load_db_config()
+            defaults.update(loaded)
+        except Exception:
+            pass   # .env missing or malformed — dialog opens with defaults
 
         dialog = DBConfigDialog(self.root, defaults)
         self.root.wait_window(dialog)
 
         if dialog.result:
-            cfg["database"] = dialog.result
-            with open(self._DB_CONFIG_FILE, "w") as f:
-                cfg.write(f)
+            res = dialog.result
+            env_path = self._ENV_FILE
+
+            # Resolve absolute path the same way _load_db_config does
+            if not os.path.isabs(env_path):
+                alt = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), env_path
+                )
+                if os.path.exists(alt) or not os.path.exists(env_path):
+                    env_path = alt
+
+            lines = [
+                f"DB_USERNAME={res.get('username', 'root')}",
+                f"DB_PASSWORD={res.get('password', '')}",
+                f"DB_HOST={res.get('host', 'localhost')}",
+                f"DB_PORT={res.get('port', '3306')}",
+                f"DB_NAME={res.get('database', 'tally_db')}",
+            ]
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+
             if messagebox.askyesno(
                 "Restart Required",
                 "DB settings saved.\n\nRestart the app for changes to take effect. Restart now?"

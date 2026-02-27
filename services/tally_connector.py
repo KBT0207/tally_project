@@ -1,4 +1,5 @@
 import re
+import threading
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Optional, Dict, Any
@@ -23,6 +24,7 @@ class TallyConnector:
     """
 
     _xml_template_cache: Dict[str, ET.Element] = {}
+    _xml_template_cache_lock = threading.Lock()  # guards concurrent writes to the cache
 
     def __init__(self, host='localhost', port=9000, timeout=(60, 1800), max_retries=3):
         self.host    = host
@@ -74,10 +76,14 @@ class TallyConnector:
 
     @classmethod
     def _load_xml_template(cls, template_path: str) -> ET.Element:
+        # Double-checked locking: fast path (no lock) for already-cached entries,
+        # slow path (with lock) for the first load of each template.
         if template_path not in cls._xml_template_cache:
-            tree = ET.parse(template_path)
-            cls._xml_template_cache[template_path] = tree.getroot()
-            logger.debug(f'Cached XML template: {template_path}')
+            with cls._xml_template_cache_lock:
+                if template_path not in cls._xml_template_cache:
+                    tree = ET.parse(template_path)
+                    cls._xml_template_cache[template_path] = tree.getroot()
+                    logger.debug(f'Cached XML template: {template_path}')
         return ET.fromstring(ET.tostring(cls._xml_template_cache[template_path]))
 
     def _prepare_xml_request(

@@ -1058,11 +1058,8 @@ def parse_items(xml_content, company_name: str) -> list:
             is_deleted     = 'Yes' if is_deleted_raw.lower() in ('yes', 'true', '1') else 'No'
 
             all_rows.append({
-                # 1. Identity / CDC keys
+                # 1. Identity
                 'company_name'      : company_name,
-                'guid'              : guid,
-                'remote_alt_guid'   : remote_alt_guid,
-                'alter_id'          : int(alter_id_raw) if alter_id_raw else 0,
                 # 2. Master descriptors
                 'item_name'         : item_name,
                 'parent_group'      : parent_group,
@@ -1077,6 +1074,10 @@ def parse_items(xml_content, company_name: str) -> list:
                 # 5. Audit metadata
                 'entered_by'        : entered_by,
                 'is_deleted'        : is_deleted,
+                # 6. CDC / change-tracking keys
+                'guid'              : guid,
+                'remote_alt_guid'   : remote_alt_guid,
+                'alter_id'          : int(alter_id_raw) if alter_id_raw else 0,
             })
 
         logger.info(f"Parsed {len(all_rows)} stock items (skipped {skipped} empty nodes) [{company_name}]")

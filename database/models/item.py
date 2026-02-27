@@ -11,11 +11,8 @@ class Item(Base):
     # ── Primary key ──────────────────────────────────────────────────────────
     id = Column(Integer, primary_key=True, autoincrement=True)
 
-    # ── Identity / CDC ───────────────────────────────────────────────────────
+    # ── Identity ─────────────────────────────────────────────────────────────
     company_name      = Column(String(255),  nullable=False, index=True)
-    guid              = Column(String(100),  nullable=False, default='')
-    remote_alt_guid   = Column(String(100),  nullable=False, default='')
-    alter_id          = Column(Integer,      nullable=False, default=0, index=True)
 
     # ── Master fields ────────────────────────────────────────────────────────
     item_name         = Column(String(500),  nullable=False, default='')
@@ -32,6 +29,11 @@ class Item(Base):
     # ── Audit / soft-delete ──────────────────────────────────────────────────
     entered_by        = Column(String(255),  nullable=False, default='')
     is_deleted        = Column(String(10),   nullable=False, default='No')
+
+    # ── CDC / change-tracking keys ───────────────────────────────────────────
+    guid              = Column(String(100),  nullable=False, default='')
+    remote_alt_guid   = Column(String(100),  nullable=False, default='')
+    alter_id          = Column(Integer,      nullable=False, default=0, index=True)
 
     # ── Row timestamps ───────────────────────────────────────────────────────
     created_at        = Column(DateTime, server_default=func.now(), nullable=False)

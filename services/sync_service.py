@@ -1,6 +1,7 @@
 from datetime import datetime, date
 from calendar import monthrange
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 from logging_config import logger
 from database.models.sync_state import SyncState
@@ -37,7 +38,31 @@ from database.database_processor import (
 
 # ── Tuning constants ──────────────────────────────────────────────────────────
 SNAPSHOT_CHUNK_MONTHS = 3   # months fetched per Tally API call during snapshot
-VOUCHER_WORKERS       = 2   # parallel threads for voucher sync
+VOUCHER_WORKERS       = 2   # parallel threads for voucher sync within ONE company
+
+# ── Global Tally request semaphore ───────────────────────────────────────────
+# Tally Prime is single-user/single-connection — even when multiple companies
+# run in parallel, all HTTP requests must be serialised so Tally does not get
+# overwhelmed or return garbled XML.  A semaphore with limit=1 achieves this
+# without removing the benefit of parallel DB writes between requests.
+#
+# Increase to 2-3 ONLY if you are on Tally Server (multi-user edition) AND
+# have verified it handles concurrent connections reliably.
+_TALLY_SEMAPHORE = threading.Semaphore(1)
+
+# ── Per-company SyncState write lock ─────────────────────────────────────────
+# Prevents two threads (voucher workers within the same company) from updating
+# the same SyncState row simultaneously, which would cause a lost-update
+# on last_synced_month / last_alter_id.
+_SYNC_STATE_LOCKS: dict[str, threading.Lock] = {}
+_SYNC_STATE_LOCKS_MUTEX = threading.Lock()
+
+def _get_company_lock(company_name: str) -> threading.Lock:
+    """Return (creating if needed) a per-company threading.Lock."""
+    with _SYNC_STATE_LOCKS_MUTEX:
+        if company_name not in _SYNC_STATE_LOCKS:
+            _SYNC_STATE_LOCKS[company_name] = threading.Lock()
+        return _SYNC_STATE_LOCKS[company_name]
 
 # ── Voucher configuration table ───────────────────────────────────────────────
 VOUCHER_CONFIG = [
@@ -170,33 +195,35 @@ def _generate_chunks(from_date_str: str, to_date_str: str, chunk_months: int = S
 
 def _mark_chunk_done(company_name: str, voucher_type: str, month_str: str, engine):
     """Persist progress for a chunk that returned no data so we can skip it on restart."""
-    db = _get_session(engine)
-    try:
-        state = db.query(SyncState).filter_by(
-            company_name=company_name,
-            voucher_type=voucher_type,
-        ).first()
+    lock = _get_company_lock(company_name)
+    with lock:
+        db = _get_session(engine)
+        try:
+            state = db.query(SyncState).filter_by(
+                company_name=company_name,
+                voucher_type=voucher_type,
+            ).first()
 
-        if state:
-            state.last_synced_month = month_str
-            state.last_sync_time    = datetime.utcnow()
-        else:
-            db.add(SyncState(
-                company_name      = company_name,
-                voucher_type      = voucher_type,
-                last_alter_id     = 0,
-                is_initial_done   = False,
-                last_synced_month = month_str,
-                last_sync_time    = datetime.utcnow(),
-            ))
+            if state:
+                state.last_synced_month = month_str
+                state.last_sync_time    = datetime.utcnow()
+            else:
+                db.add(SyncState(
+                    company_name      = company_name,
+                    voucher_type      = voucher_type,
+                    last_alter_id     = 0,
+                    is_initial_done   = False,
+                    last_synced_month = month_str,
+                    last_sync_time    = datetime.utcnow(),
+                ))
 
-        db.commit()
-    except Exception:
-        db.rollback()
-        logger.exception(f"[{company_name}][{voucher_type}] Failed to mark chunk {month_str} done")
-        raise
-    finally:
-        db.close()
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception(f"[{company_name}][{voucher_type}] Failed to mark chunk {month_str} done")
+            raise
+        finally:
+            db.close()
 
 
 # ── Sub-sync functions ────────────────────────────────────────────────────────
@@ -213,9 +240,10 @@ def _sync_trial_balance(
         state          = get_sync_state(company_name, 'trial_balance', engine)
         saved_alter_id = state.last_alter_id if state else 0
 
-        xml = tally.fetch_trial_balance(
-            company_name=company_name, from_date=from_date, to_date=to_date
-        )
+        with _TALLY_SEMAPHORE:
+            xml = tally.fetch_trial_balance(
+                company_name=company_name, from_date=from_date, to_date=to_date
+            )
         if not xml:
             logger.warning(f"[{company_name}] No trial balance data from Tally")
             return
@@ -235,7 +263,11 @@ def _sync_trial_balance(
             return
 
         upsert_trial_balance(rows, engine)
-        update_sync_state(company_name, 'trial_balance', max_alter_id, engine)
+
+        lock = _get_company_lock(company_name)
+        with lock:
+            update_sync_state(company_name, 'trial_balance', max_alter_id, engine)
+
         logger.info(
             f"[{company_name}] Trial Balance done | "
             f"rows={len(rows)} | max_alter_id={max_alter_id} (was {saved_alter_id})"
@@ -253,6 +285,7 @@ def _sync_items(company_name: str, tally: TallyConnector, engine):
     • Subsequent → CDC using stored alter_id
     """
     logger.info(f"[{company_name}] Syncing Items (StockItem master)")
+    lock = _get_company_lock(company_name)
     try:
         state           = get_sync_state(company_name, 'items', engine)
         is_initial_done = state.is_initial_done if state else False
@@ -260,9 +293,10 @@ def _sync_items(company_name: str, tally: TallyConnector, engine):
 
         if is_initial_done:
             logger.info(f"[{company_name}][items] CDC | last_alter_id={last_alter_id}")
-            xml = tally.fetch_items_cdc(
-                company_name=company_name, last_alter_id=last_alter_id
-            )
+            with _TALLY_SEMAPHORE:
+                xml = tally.fetch_items_cdc(
+                    company_name=company_name, last_alter_id=last_alter_id
+                )
             if not xml:
                 logger.info(f"[{company_name}][items] CDC: no new/changed items")
                 return
@@ -277,14 +311,16 @@ def _sync_items(company_name: str, tally: TallyConnector, engine):
 
             upsert_items(rows, engine)
             new_max = _get_max_alter_id(rows)
-            update_sync_state(company_name, 'items', new_max, engine, is_initial_done=True)
+            with lock:
+                update_sync_state(company_name, 'items', new_max, engine, is_initial_done=True)
             logger.info(
                 f"[{company_name}][items] CDC done | rows={len(rows)} | new max_alter_id={new_max}"
             )
             return
 
         logger.info(f"[{company_name}][items] SNAPSHOT — fetching all stock items")
-        xml = tally.fetch_items(company_name=company_name)
+        with _TALLY_SEMAPHORE:
+            xml = tally.fetch_items(company_name=company_name)
         if not xml:
             logger.warning(f"[{company_name}][items] No item data from Tally")
             return
@@ -296,7 +332,8 @@ def _sync_items(company_name: str, tally: TallyConnector, engine):
 
         upsert_items(rows, engine)
         max_alter_id = _get_max_alter_id(rows)
-        update_sync_state(company_name, 'items', max_alter_id, engine, is_initial_done=True)
+        with lock:
+            update_sync_state(company_name, 'items', max_alter_id, engine, is_initial_done=True)
         logger.info(
             f"[{company_name}][items] Snapshot done | "
             f"rows={len(rows)} | max_alter_id={max_alter_id} | CDC enabled from next run"
@@ -308,6 +345,7 @@ def _sync_items(company_name: str, tally: TallyConnector, engine):
 
 def _sync_ledgers(company_name: str, tally: TallyConnector, engine):
     logger.info(f"[{company_name}] Syncing Ledgers")
+    lock = _get_company_lock(company_name)
     try:
         state           = get_sync_state(company_name, 'ledger', engine)
         is_initial_done = state.is_initial_done if state else False
@@ -315,9 +353,10 @@ def _sync_ledgers(company_name: str, tally: TallyConnector, engine):
 
         if is_initial_done:
             logger.info(f"[{company_name}][ledger] CDC | last_alter_id={last_alter_id}")
-            xml = tally.fetch_ledger_cdc(
-                company_name=company_name, last_alter_id=last_alter_id
-            )
+            with _TALLY_SEMAPHORE:
+                xml = tally.fetch_ledger_cdc(
+                    company_name=company_name, last_alter_id=last_alter_id
+                )
             if not xml:
                 logger.info(f"[{company_name}][ledger] CDC: no new/changed ledgers")
                 return
@@ -332,14 +371,16 @@ def _sync_ledgers(company_name: str, tally: TallyConnector, engine):
 
             upsert_ledgers(rows, engine)
             new_max = _get_max_alter_id(rows)
-            update_sync_state(company_name, 'ledger', new_max, engine, is_initial_done=True)
+            with lock:
+                update_sync_state(company_name, 'ledger', new_max, engine, is_initial_done=True)
             logger.info(
                 f"[{company_name}][ledger] CDC done | rows={len(rows)} | new max_alter_id={new_max}"
             )
             return
 
         logger.info(f"[{company_name}][ledger] SNAPSHOT — fetching all ledgers")
-        xml = tally.fetch_ledgers(company_name=company_name)
+        with _TALLY_SEMAPHORE:
+            xml = tally.fetch_ledgers(company_name=company_name)
         if not xml:
             logger.warning(f"[{company_name}][ledger] No ledger data from Tally")
             return
@@ -351,7 +392,8 @@ def _sync_ledgers(company_name: str, tally: TallyConnector, engine):
 
         upsert_ledgers(rows, engine)
         max_alter_id = _get_max_alter_id(rows)
-        update_sync_state(company_name, 'ledger', max_alter_id, engine, is_initial_done=True)
+        with lock:
+            update_sync_state(company_name, 'ledger', max_alter_id, engine, is_initial_done=True)
         logger.info(
             f"[{company_name}][ledger] Snapshot done | "
             f"rows={len(rows)} | max_alter_id={max_alter_id} | CDC enabled from next run"
@@ -377,6 +419,7 @@ def _sync_voucher(
     parser_type_name = config['parser_type_name']
     kind             = config['kind']
 
+    lock = _get_company_lock(company_name)
     logger.info(f"[{company_name}][{voucher_type}] Starting")
 
     try:
@@ -391,7 +434,8 @@ def _sync_voucher(
 
             t0       = datetime.now()
             fetch_fn = getattr(tally, cdc_fetch)
-            xml      = fetch_fn(company_name=company_name, last_alter_id=last_alter_id)
+            with _TALLY_SEMAPHORE:
+                xml = fetch_fn(company_name=company_name, last_alter_id=last_alter_id)
             fetch_ms = int((datetime.now() - t0).total_seconds() * 1000)
 
             if not xml:
@@ -413,7 +457,8 @@ def _sync_voucher(
             upsert_ms = int((datetime.now() - t1).total_seconds() * 1000)
 
             new_max = _get_max_alter_id(rows)
-            update_sync_state(company_name, voucher_type, new_max, engine, is_initial_done=True)
+            with lock:
+                update_sync_state(company_name, voucher_type, new_max, engine, is_initial_done=True)
             logger.info(
                 f"[{company_name}][{voucher_type}] CDC done | "
                 f"rows={len(rows)} | new max_alter_id={new_max} | "
@@ -451,7 +496,8 @@ def _sync_voucher(
                 f"[{company_name}][{voucher_type}] Chunk {month_str} | {chunk_from} → {chunk_to}"
             )
 
-            xml = fetch_fn(company_name=company_name, from_date=chunk_from, to_date=chunk_to)
+            with _TALLY_SEMAPHORE:
+                xml = fetch_fn(company_name=company_name, from_date=chunk_from, to_date=chunk_to)
 
             if not xml:
                 logger.info(
@@ -472,6 +518,9 @@ def _sync_voucher(
                 continue
 
             chunk_max = max((int(r.get('alter_id', 0)) for r in rows), default=0)
+            # upsert_and_advance_month internally acquires the per-company lock
+            # for its SyncState write so we do NOT hold the lock around the
+            # (potentially slow) DB upsert of the voucher rows themselves.
             upsert_and_advance_month(
                 rows               = rows,
                 model_class        = model_class,
@@ -488,14 +537,15 @@ def _sync_voucher(
             chunks_done += 1
 
         final_alter_id = max(all_alter_ids) if all_alter_ids else 0
-        update_sync_state(
-            company_name      = company_name,
-            voucher_type      = voucher_type,
-            last_alter_id     = final_alter_id,
-            engine            = engine,
-            last_synced_month = to_date[:6],
-            is_initial_done   = True,
-        )
+        with lock:
+            update_sync_state(
+                company_name      = company_name,
+                voucher_type      = voucher_type,
+                last_alter_id     = final_alter_id,
+                engine            = engine,
+                last_synced_month = to_date[:6],
+                is_initial_done   = True,
+            )
 
         logger.info(
             f"[{company_name}][{voucher_type}] Snapshot complete | "
@@ -512,31 +562,45 @@ def _sync_voucher(
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def sync_company(
-    company:          dict,
-    tally:            TallyConnector,
+    company:              dict,
+    tally:                TallyConnector,
     engine,
-    to_date:          str,
-    manual_from_date: str = None,
+    to_date:              str,
+    manual_from_date:     str  = None,
+    parallel_company_mode: bool = False,
 ):
-    comp_name = company.get('name', '').strip()
-    from_date = manual_from_date if manual_from_date else _resolve_from_date(company)
+    """
+    Sync a single company.
+
+    parallel_company_mode=True  → called from sync_all_companies_parallel;
+        inner voucher ThreadPoolExecutor is capped at 1 worker because Tally
+        requests are already serialised by _TALLY_SEMAPHORE, and adding more
+        threads just wastes memory with no throughput benefit.
+
+    parallel_company_mode=False → sequential call; use full VOUCHER_WORKERS.
+    """
+    comp_name   = company.get('name', '').strip()
+    from_date   = manual_from_date if manual_from_date else _resolve_from_date(company)
+    # When multiple companies run in parallel the inner executor must stay at
+    # 1 worker — extra threads would all block on _TALLY_SEMAPHORE anyway.
+    inner_workers = 1 if parallel_company_mode else VOUCHER_WORKERS
 
     logger.info('=' * 60)
     logger.info(f'Syncing company  : {comp_name}')
     logger.info(f'Date range       : {from_date} → {to_date}')
     logger.info(f'Chunk size       : {SNAPSHOT_CHUNK_MONTHS} months per API call')
-    logger.info(f'Parallel workers : {VOUCHER_WORKERS} threads')
+    logger.info(f'Voucher workers  : {inner_workers} (parallel_company_mode={parallel_company_mode})')
     logger.info('=' * 60)
 
     start_time = datetime.now()
 
-    # Ledgers and trial balance are always sequential (fast, no parallelism needed)
+    # Ledgers, items and trial balance are sequential (fast master syncs)
     _sync_ledgers(comp_name, tally, engine)
     _sync_items(comp_name, tally, engine)
     _sync_trial_balance(comp_name, tally, engine, from_date, to_date)
 
     logger.info(f"[{comp_name}] Launching {len(VOUCHER_CONFIG)} voucher syncs …")
-    with ThreadPoolExecutor(max_workers=VOUCHER_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=inner_workers) as executor:
         futures = {
             executor.submit(
                 _sync_voucher,
@@ -571,6 +635,7 @@ def sync_all_companies(
     to_date:          str,
     manual_from_date: str = None,
 ):
+    """Sequential company sync (original behaviour, unchanged)."""
     if not companies:
         logger.warning("sync_all_companies: empty company list")
         return
@@ -578,13 +643,67 @@ def sync_all_companies(
     invalid_names = {'', 'N/A', 'NA', 'NONE'}
     valid   = [c for c in companies if c.get('name', '').strip().upper() not in invalid_names]
     skipped = len(companies) - len(valid)
-    logger.info(f"Syncing {len(valid)} companies (skipped {skipped} invalid entries)")
+    logger.info(f"Syncing {len(valid)} companies sequentially (skipped {skipped} invalid entries)")
 
     for company in valid:
         sync_company(
-            company          = company,
-            tally            = tally,
-            engine           = engine,
-            to_date          = to_date,
-            manual_from_date = manual_from_date,
+            company               = company,
+            tally                 = tally,
+            engine                = engine,
+            to_date               = to_date,
+            manual_from_date      = manual_from_date,
+            parallel_company_mode = False,
         )
+
+
+def sync_all_companies_parallel(
+    companies:         list,
+    tally:             TallyConnector,
+    engine,
+    to_date:           str,
+    manual_from_date:  str = None,
+    max_company_workers: int = 3,
+):
+    """
+    Parallel company sync.
+
+    All HTTP calls to Tally are serialised via _TALLY_SEMAPHORE so Tally is
+    never hit concurrently regardless of how many company threads are running.
+    DB writes to different companies are fully independent and run in parallel.
+
+    max_company_workers: how many companies to process at once.
+        Keep ≤ 3 for Tally Prime (single-user); can raise for Tally Server.
+    """
+    if not companies:
+        logger.warning("sync_all_companies_parallel: empty company list")
+        return
+
+    invalid_names = {'', 'N/A', 'NA', 'NONE'}
+    valid   = [c for c in companies if c.get('name', '').strip().upper() not in invalid_names]
+    skipped = len(companies) - len(valid)
+    logger.info(
+        f"Syncing {len(valid)} companies in parallel "
+        f"(workers={max_company_workers}, skipped {skipped} invalid)"
+    )
+
+    with ThreadPoolExecutor(max_workers=max_company_workers) as executor:
+        futures = {
+            executor.submit(
+                sync_company,
+                company               = company,
+                tally                 = tally,
+                engine                = engine,
+                to_date               = to_date,
+                manual_from_date      = manual_from_date,
+                parallel_company_mode = True,
+            ): company.get('name', '?')
+            for company in valid
+        }
+
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                future.result()
+                logger.info(f"Company '{name}' sync thread finished ✓")
+            except Exception:
+                logger.error(f"Company '{name}' sync thread raised an exception")

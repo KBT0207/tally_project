@@ -1,5 +1,6 @@
 from datetime import datetime
 from sqlalchemy.orm import sessionmaker
+import threading
 
 from database.models.company import Company
 from database.models.sync_state import SyncState
@@ -11,6 +12,19 @@ from database.models.trial_balance import TrialBalance
 
 import pandas as pd
 from logging_config import logger
+
+# ── Per-company SyncState write locks ────────────────────────────────────────
+# Imported and shared with sync_service via the same module-level dict.
+# sync_service calls _get_db_company_lock() to retrieve the same lock object.
+_DB_COMPANY_LOCKS: dict[str, threading.Lock] = {}
+_DB_COMPANY_LOCKS_MUTEX = threading.Lock()
+
+def _get_db_company_lock(company_name: str) -> threading.Lock:
+    """Return (creating if needed) a per-company threading.Lock for DB writes."""
+    with _DB_COMPANY_LOCKS_MUTEX:
+        if company_name not in _DB_COMPANY_LOCKS:
+            _DB_COMPANY_LOCKS[company_name] = threading.Lock()
+        return _DB_COMPANY_LOCKS[company_name]
 
 def _get_session(engine):
     return sessionmaker(bind=engine)()
@@ -207,44 +221,64 @@ def _upsert_ledger_voucher_in_session(rows, model_class, db):
     return inserted, updated, unchanged, skipped, deleted
 
 def upsert_and_advance_month(rows, model_class, upsert_fn, company_name, voucher_type, month_str, engine, chunk_max_alter_id=0):
+    """
+    Upsert voucher rows for one chunk then atomically advance SyncState.
+
+    The SyncState update is protected by a per-company lock so that two
+    voucher worker threads for the same company cannot overwrite each other's
+    last_synced_month / last_alter_id.  The (slow) voucher upsert itself runs
+    outside the lock so other voucher types are not blocked.
+    """
     db = _get_session(engine)
     try:
         inserted, updated, unchanged, skipped, deleted = upsert_fn(rows, model_class, db)
-
-        state = db.query(SyncState).filter_by(
-            company_name = company_name,
-            voucher_type = voucher_type,
-        ).first()
-
-        if state:
-            state.last_synced_month = month_str
-            state.last_sync_time    = datetime.utcnow()
-
-            if chunk_max_alter_id > (state.last_alter_id or 0):
-                state.last_alter_id = chunk_max_alter_id
-        else:
-            db.add(SyncState(
-                company_name      = company_name,
-                voucher_type      = voucher_type,
-                last_alter_id     = chunk_max_alter_id,
-                is_initial_done   = False,
-                last_synced_month = month_str,
-                last_sync_time    = datetime.utcnow(),
-            ))
-
         db.commit()
-        logger.info(
-            f"[{company_name}] [{voucher_type}] Month {month_str} committed | "
-            f"ins={inserted} upd={updated} unch={unchanged} del={deleted} skip={skipped}"
-        )
-        return inserted, updated, unchanged, skipped, deleted
-
     except Exception:
         db.rollback()
-        logger.exception(f"[{company_name}] [{voucher_type}] Month {month_str} ROLLED BACK")
-        raise
-    finally:
+        logger.exception(f"[{company_name}] [{voucher_type}] Month {month_str} voucher upsert ROLLED BACK")
         db.close()
+        raise
+    else:
+        db.close()
+
+    # Now update SyncState in a separate session, protected by the company lock.
+    lock = _get_db_company_lock(company_name)
+    with lock:
+        db2 = _get_session(engine)
+        try:
+            state = db2.query(SyncState).filter_by(
+                company_name = company_name,
+                voucher_type = voucher_type,
+            ).first()
+
+            if state:
+                state.last_synced_month = month_str
+                state.last_sync_time    = datetime.utcnow()
+                if chunk_max_alter_id > (state.last_alter_id or 0):
+                    state.last_alter_id = chunk_max_alter_id
+            else:
+                db2.add(SyncState(
+                    company_name      = company_name,
+                    voucher_type      = voucher_type,
+                    last_alter_id     = chunk_max_alter_id,
+                    is_initial_done   = False,
+                    last_synced_month = month_str,
+                    last_sync_time    = datetime.utcnow(),
+                ))
+
+            db2.commit()
+            logger.info(
+                f"[{company_name}] [{voucher_type}] Month {month_str} committed | "
+                f"ins={inserted} upd={updated} unch={unchanged} del={deleted} skip={skipped}"
+            )
+            return inserted, updated, unchanged, skipped, deleted
+
+        except Exception:
+            db2.rollback()
+            logger.exception(f"[{company_name}] [{voucher_type}] Month {month_str} SyncState ROLLED BACK")
+            raise
+        finally:
+            db2.close()
 
 def get_sync_state(company_name, voucher_type, engine):
     db = _get_session(engine)
@@ -487,15 +521,13 @@ def upsert_items(rows, engine):
         'item_name', 'parent_group', 'category',
         'base_units', 'gst_type_of_supply',
         'opening_balance', 'opening_rate', 'opening_value',
-        'entered_by', 'is_deleted', 'remote_alt_guid', 'alter_id',
+        'entered_by', 'is_deleted',
+        'guid', 'remote_alt_guid', 'alter_id',
     ]
 
     def _safe(row):
         return {
             'company_name'       : _t(row.get('company_name'),        255),
-            'guid'               : _t(row.get('guid'),                100),
-            'remote_alt_guid'    : _t(row.get('remote_alt_guid'),     100),
-            'alter_id'           : row.get('alter_id', 0),
             'item_name'          : _t(row.get('item_name'),           500),
             'parent_group'       : _t(row.get('parent_group'),        255),
             'category'           : _t(row.get('category'),            255),
@@ -506,6 +538,9 @@ def upsert_items(rows, engine):
             'opening_value'      : row.get('opening_value',    0.0),
             'entered_by'         : _t(row.get('entered_by'),          255),
             'is_deleted'         : _t(row.get('is_deleted'),           10),
+            'guid'               : _t(row.get('guid'),                100),
+            'remote_alt_guid'    : _t(row.get('remote_alt_guid'),     100),
+            'alter_id'           : row.get('alter_id', 0),
         }
 
     try:
